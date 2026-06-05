@@ -204,6 +204,7 @@ impl JjCommand {
                 "{m}", if(root, "Y", "N"),
                 "{m}", working_copies,
                 "{m}", local_bookmarks.map(|b| b.name()).join(" "),
+                "{m}", tags.map(|t| t.name()).join(" "),
                 "{m}", coalesce(author.email(), ""),
                 "{m}", author.timestamp().local().format("%Y-%m-%d %H:%M:%S"),
                 "{m}", coalesce(description.first_line(), ""),
@@ -220,6 +221,7 @@ impl JjCommand {
             r#" ++ commit_id.shortest(8) ++ "\n""#,
             r#" ++ local_bookmarks.map(|b| b.name()).join("\n") ++ "\n""#,
             r#" ++ remote_bookmarks.filter(|b| b.remote() != "git").map(|b| b.name() ++ "@" ++ b.remote()).join("\n") ++ "\n""#,
+            r#" ++ tags.map(|t| t.name()).join("\n") ++ "\n""#,
             r#" ++ working_copies ++ "\n""#,
         );
         let args = vec!["log", "--no-graph", "--revisions", revset, "-T", template];

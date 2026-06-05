@@ -513,6 +513,12 @@ impl Model {
                     target: target.clone(),
                 });
             }
+            for tag in &commit.tags {
+                candidates.push(FuzzyCandidate {
+                    display: tag.clone(),
+                    target: target.clone(),
+                });
+            }
             for workspace in &commit.workspaces {
                 candidates.push(FuzzyCandidate {
                     display: workspace.clone(),
@@ -559,6 +565,25 @@ impl Model {
             for bookmark in &commit.bookmarks {
                 candidates.push(FuzzyCandidate {
                     display: bookmark.clone(),
+                    target: target.clone(),
+                });
+            }
+        }
+
+        self.start_fuzzy_input("Select", candidates, TextInputAction::SelectInRevset);
+    }
+
+    pub fn select_by_tag(&mut self) {
+        let mut candidates: Vec<FuzzyCandidate> = Vec::new();
+
+        for item in &self.jj_log.log_tree {
+            let crate::log_tree::CommitOrText::Commit(commit) = item else {
+                continue;
+            };
+            let target = Some(commit.flat_log_idx().to_string());
+            for tag in &commit.tags {
+                candidates.push(FuzzyCandidate {
+                    display: tag.clone(),
                     target: target.clone(),
                 });
             }

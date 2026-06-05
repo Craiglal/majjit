@@ -458,6 +458,12 @@ impl CommandTree {
                 CommandTreeNode::new_action(Message::SelectByDescription),
             ),
             (
+                "Select",
+                "Tag",
+                vec![KeyCode::Char('/'), KeyCode::Char('t')],
+                CommandTreeNode::new_action(Message::SelectByTag),
+            ),
+            (
                 "Duplicate",
                 "Selection onto destination",
                 vec![KeyCode::Char('D'), KeyCode::Char('o')],
