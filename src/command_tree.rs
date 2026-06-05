@@ -2225,14 +2225,20 @@ impl CommandTree {
             ),
             (
                 "Commands",
-                "Undo last operation",
+                "Undo/Redo",
                 vec![KeyCode::Char('u')],
+                CommandTreeNode::new_children(),
+            ),
+            (
+                "Undo",
+                "Undo last operation",
+                vec![KeyCode::Char('u'), KeyCode::Char('u')],
                 CommandTreeNode::new_action(Message::Undo),
             ),
             (
-                "Commands",
+                "Undo",
                 "Redo last operation",
-                vec![KeyCode::Char('U')],
+                vec![KeyCode::Char('u'), KeyCode::Char('U')],
                 CommandTreeNode::new_action(Message::Redo),
             ),
         ];
