@@ -2238,7 +2238,7 @@ impl CommandTree {
             (
                 "Undo",
                 "Redo last operation",
-                vec![KeyCode::Char('u'), KeyCode::Char('U')],
+                vec![KeyCode::Char('u'), KeyCode::Char('r')],
                 CommandTreeNode::new_action(Message::Redo),
             ),
         ];
