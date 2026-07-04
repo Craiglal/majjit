@@ -1,5 +1,15 @@
 use anyhow::{Result, bail};
 
+/// Build the payload fed to the generate command on stdin: the change's diff,
+/// optionally preceded by a `Bookmarks:` header when the change has bookmarks.
+fn build_stdin_payload(diff: &str, bookmarks: &[String]) -> String {
+    if bookmarks.is_empty() {
+        diff.to_string()
+    } else {
+        format!("Bookmarks: {}\n\n{}", bookmarks.join(" "), diff)
+    }
+}
+
 fn clean_generated_message(stdout: &str, stderr: &str) -> Result<String> {
     let message = strip_markdown_fences(stdout);
     if message.trim().is_empty() {
@@ -101,6 +111,27 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Generate command produced no commit message: model returned nothing"
+        );
+    }
+
+    #[test]
+    fn test_build_stdin_payload_no_bookmarks() {
+        assert_eq!(build_stdin_payload("diff body\n", &[]), "diff body\n");
+    }
+
+    #[test]
+    fn test_build_stdin_payload_single_bookmark() {
+        assert_eq!(
+            build_stdin_payload("diff body\n", &["feat/x".to_string()]),
+            "Bookmarks: feat/x\n\ndiff body\n"
+        );
+    }
+
+    #[test]
+    fn test_build_stdin_payload_multiple_bookmarks() {
+        assert_eq!(
+            build_stdin_payload("d\n", &["a".to_string(), "b".to_string()]),
+            "Bookmarks: a b\n\nd\n"
         );
     }
 }
