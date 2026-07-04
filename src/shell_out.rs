@@ -239,6 +239,10 @@ impl JjCommand {
         Self::new(&args, global_args, None, ReturnOutput::Stdout)
     }
 
+    pub fn jj_diff_git(change_id: &str, global_args: GlobalArgs) -> Self {
+        Self::new_no_color(&diff_git_args(change_id), global_args, ReturnOutput::Stdout)
+    }
+
     pub fn jj_diff_file(change_id: &str, file: &str, global_args: GlobalArgs) -> Self {
         let args = [
             "diff",
@@ -774,6 +778,35 @@ impl JjCommand {
         }
     }
 
+    pub fn jj_config_get_ai_describe_command(
+        repository: &str,
+    ) -> Result<Option<String>, JjCommandError> {
+        let args = [
+            "--repository",
+            repository,
+            "config",
+            "get",
+            "majjit.ai-describe-command",
+        ];
+        let output = Command::new("jj")
+            .args(args)
+            .output()
+            .map_err(JjCommandError::new_other)?;
+
+        // `jj config get` exits non-zero when the key is unset — treat that as
+        // "no command configured" rather than an error to surface.
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if value.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(value))
+        }
+    }
+
     pub fn jj_workspace_list_names(global_args: GlobalArgs) -> Self {
         let args = [
             "workspace",
@@ -852,6 +885,16 @@ impl JjCommand {
     }
 }
 
+fn diff_git_args(change_id: &str) -> [&str; 5] {
+    [
+        "diff",
+        "--ignore-working-copy",
+        "--git",
+        "--revisions",
+        change_id,
+    ]
+}
+
 #[derive(Debug)]
 pub enum JjCommandError {
     Failed { stderr: String },
@@ -907,4 +950,23 @@ fn strip_non_style_ansi(str: &str) -> String {
     let non_style_ansi_regex =
         Regex::new(r"\x1b(\[[0-9;?]*[ -/]*([@-l]|[n-~])|\].*?(\x07|\x1b\\)|P.*?\x1b\\)").unwrap();
     non_style_ansi_regex.replace_all(str, "").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_diff_git_args() {
+        assert_eq!(
+            diff_git_args("abc123"),
+            [
+                "diff",
+                "--ignore-working-copy",
+                "--git",
+                "--revisions",
+                "abc123"
+            ]
+        );
+    }
 }
