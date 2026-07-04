@@ -1,3 +1,4 @@
+mod ai_describe;
 mod command_tree;
 mod log_tree;
 mod model;
