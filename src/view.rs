@@ -41,14 +41,18 @@ pub fn view(model: &mut Model, frame: &mut Frame) {
 
 fn render_layout(model: &Model, area: Rect) -> std::rc::Rc<[Rect]> {
     let bottom_height = if model.state == State::EnteringText {
-        let fuzzy_lines = model
-            .text_input
-            .as_ref()
+        let session = model.text_input.as_ref();
+        let fuzzy_lines = session
             .and_then(|s| s.fuzzy.as_ref())
             .map(|f| f.filtered.len() as u16)
             .unwrap_or(0);
         let divider = if fuzzy_lines > 0 { 1 } else { 0 };
-        let base_height = 3 + fuzzy_lines + divider;
+        // Extra rows for a multi-line message beyond the first input line.
+        let extra_input_lines = session
+            .filter(|s| s.multiline)
+            .map(|s| s.textarea.lines().len().saturating_sub(1) as u16)
+            .unwrap_or(0);
+        let base_height = 3 + fuzzy_lines + divider + extra_input_lines;
         base_height.min(area.height / 2)
     } else if let Some(info_list) = &model.info_list {
         info_list.lines.len() as u16 + 2
