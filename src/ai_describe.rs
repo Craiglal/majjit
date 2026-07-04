@@ -1,4 +1,61 @@
+use std::io::Write;
+use std::process::{Command, Stdio};
+use std::thread;
+
 use anyhow::{Result, bail};
+
+/// Generate a describe message by running `generate_command` via `sh -c`,
+/// piping the change's diff (with an optional bookmark header) to its stdin.
+/// Blocking. The change id, bookmark names, and diff byte size are also
+/// exported as environment variables for the command to use.
+pub fn generate_message(
+    diff: &str,
+    bookmarks: &[String],
+    change_id: &str,
+    generate_command: &str,
+) -> Result<String> {
+    if generate_command.trim().is_empty() {
+        bail!(
+            "No AI command configured. Set it with:\n  jj config set --user majjit.ai-describe-command '<command>'"
+        );
+    }
+    if diff.trim().is_empty() {
+        bail!("No changes to describe");
+    }
+
+    let payload = build_stdin_payload(diff, bookmarks);
+
+    let mut child = Command::new("sh")
+        .args(["-c", generate_command])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("MAJJIT_AI_DESCRIBE_CHANGE_ID", change_id)
+        .env("MAJJIT_AI_DESCRIBE_BOOKMARKS", bookmarks.join(" "))
+        .env("MAJJIT_AI_DESCRIBE_DIFF_BYTES", diff.len().to_string())
+        .spawn()?;
+
+    // Write stdin from a separate thread to avoid a deadlock when the child
+    // writes to stdout before consuming all of stdin. Write errors (e.g. the
+    // command ignores stdin and exits early → EPIPE) are intentionally ignored.
+    let mut stdin = child.stdin.take().expect("stdin was piped");
+    let writer = thread::spawn(move || {
+        let _ = stdin.write_all(payload.as_bytes());
+        // Dropping `stdin` here closes the pipe so the child sees EOF.
+    });
+
+    let output = child.wait_with_output()?;
+    let _ = writer.join();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        bail!("Generate command failed: {}", stderr.trim());
+    }
+
+    clean_generated_message(&stdout, &stderr)
+}
 
 /// Build the payload fed to the generate command on stdin: the change's diff,
 /// optionally preceded by a `Bookmarks:` header when the change has bookmarks.
@@ -133,5 +190,48 @@ mod tests {
             build_stdin_payload("d\n", &["a".to_string(), "b".to_string()]),
             "Bookmarks: a b\n\nd\n"
         );
+    }
+
+    #[test]
+    fn test_generate_message_empty_command_errors() {
+        let err = generate_message("diff\n", &[], "abc123", "   ").unwrap_err();
+        assert!(err.to_string().contains("No AI command configured"));
+    }
+
+    #[test]
+    fn test_generate_message_empty_diff_errors() {
+        let err = generate_message("  \n ", &[], "abc123", "cat").unwrap_err();
+        assert_eq!(err.to_string(), "No changes to describe");
+    }
+
+    #[test]
+    fn test_generate_message_pipes_diff_to_stdin() {
+        // `cat` echoes stdin; with no bookmarks the payload is just the diff.
+        let out = generate_message("feat: hi\n", &[], "abc123", "cat").unwrap();
+        assert_eq!(out, "feat: hi");
+    }
+
+    #[test]
+    fn test_generate_message_includes_bookmark_header() {
+        let out = generate_message("body\n", &["feat/x".to_string()], "abc123", "cat").unwrap();
+        assert_eq!(out, "Bookmarks: feat/x\n\nbody");
+    }
+
+    #[test]
+    fn test_generate_message_exports_bookmark_env() {
+        let out = generate_message(
+            "d\n",
+            &["bk1".to_string(), "bk2".to_string()],
+            "chg",
+            "printf %s \"$MAJJIT_AI_DESCRIBE_BOOKMARKS\"",
+        )
+        .unwrap();
+        assert_eq!(out, "bk1 bk2");
+    }
+
+    #[test]
+    fn test_generate_message_nonzero_exit_errors() {
+        let err = generate_message("d\n", &[], "chg", "false").unwrap_err();
+        assert!(err.to_string().contains("Generate command failed"));
     }
 }
