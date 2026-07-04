@@ -1096,7 +1096,7 @@ impl Model {
             Ok(Some(command)) => command,
             Ok(None) => {
                 self.info_list = Some(Text::from(
-                    "No AI command configured. Set it with:\n  jj config set --user majjit.ai-describe-command '<command>'",
+                    "No AI command configured. Run `jj config edit --user` and add under [majjit]:\n  ai-describe-command = 'your command here'\n(jj parses the value as TOML, so wrap the command in quotes.)",
                 ));
                 return Ok(());
             }

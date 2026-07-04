@@ -16,7 +16,7 @@ pub fn generate_message(
 ) -> Result<String> {
     if generate_command.trim().is_empty() {
         bail!(
-            "No AI command configured. Set it with:\n  jj config set --user majjit.ai-describe-command '<command>'"
+            "No AI command configured. Run `jj config edit --user` and add under [majjit]:\n  ai-describe-command = 'your command here'\n(jj parses the value as TOML, so wrap the command in quotes.)"
         );
     }
     if diff.trim().is_empty() {
