@@ -99,10 +99,10 @@ fn strip_markdown_fences(raw: &str) -> String {
 
     // Strip a pair of single backticks wrapping only the first line.
     let mut lines: Vec<&str> = trimmed.lines().collect();
-    if let Some(first) = lines.first_mut() {
-        if let Some(stripped) = first.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
-            *first = stripped;
-        }
+    if let Some(first) = lines.first_mut()
+        && let Some(stripped) = first.strip_prefix('`').and_then(|s| s.strip_suffix('`'))
+    {
+        *first = stripped;
     }
 
     lines.join("\n").trim().to_string()
