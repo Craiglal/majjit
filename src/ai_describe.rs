@@ -68,7 +68,7 @@ fn build_stdin_payload(diff: &str, bookmarks: &[String]) -> String {
 }
 
 fn clean_generated_message(stdout: &str, stderr: &str) -> Result<String> {
-    let message = strip_markdown_fences(stdout);
+    let message = strip_markdown_fences(&strip_reasoning(stdout));
     if message.trim().is_empty() {
         let stderr = stderr.trim();
         if stderr.is_empty() {
@@ -77,6 +77,23 @@ fn clean_generated_message(stdout: &str, stderr: &str) -> Result<String> {
         bail!("Generate command produced no commit message: {}", stderr);
     }
     Ok(message)
+}
+
+/// Remove `<think>…</think>` reasoning blocks emitted by reasoning models
+/// (e.g. deepseek, qwen) so only the commit message remains.
+fn strip_reasoning(raw: &str) -> String {
+    let mut out = raw.to_string();
+    while let Some(start) = out.find("<think>") {
+        match out[start..].find("</think>") {
+            Some(rel_end) => {
+                let end = start + rel_end + "</think>".len();
+                out.replace_range(start..end, "");
+            }
+            // Unclosed block: leave the text as-is rather than discard everything.
+            None => break,
+        }
+    }
+    out
 }
 
 /// Strip markdown code fences and any preamble text before the message.
@@ -111,6 +128,27 @@ fn strip_markdown_fences(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_strip_reasoning_removes_think_block() {
+        let input = "<think>\nlet me reason\nabout this change\n</think>\n\nAdd name parameter to greet\n";
+        assert_eq!(
+            strip_reasoning(input).trim(),
+            "Add name parameter to greet"
+        );
+    }
+
+    #[test]
+    fn test_strip_reasoning_no_think_is_noop() {
+        assert_eq!(strip_reasoning("feat: hi"), "feat: hi");
+    }
+
+    #[test]
+    fn test_clean_generated_message_strips_reasoning() {
+        let cleaned =
+            clean_generated_message("<think>reasoning here</think>\n\nfix: bug", "").unwrap();
+        assert_eq!(cleaned, "fix: bug");
+    }
 
     #[test]
     fn test_strip_markdown_fences_plain() {
