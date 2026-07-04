@@ -794,7 +794,10 @@ impl JjCommand {
             .map_err(JjCommandError::new_other)?;
 
         // `jj config get` exits non-zero when the key is unset — treat that as
-        // "no command configured" rather than an error to surface.
+        // "no command configured" rather than an error to surface. Any other
+        // non-zero exit (e.g. a malformed jj config) is intentionally reported
+        // the same way: the AI-describe flow is optional, and a genuinely broken
+        // jj config surfaces through the many other jj commands majjit runs.
         if !output.status.success() {
             return Ok(None);
         }
