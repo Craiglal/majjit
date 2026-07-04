@@ -1,3 +1,4 @@
+use crate::ai_describe;
 use crate::{
     command_tree::{CommandTree, display_unbound_error_lines},
     log_tree::{DIFF_HUNK_LINE_IDX, JjLog, LogTreeNode, TreePosition, get_parent_tree_position},
@@ -43,6 +44,7 @@ pub struct TextInputSession {
     pub textarea: TextArea<'static>,
     pub action: TextInputAction,
     pub fuzzy: Option<FuzzyFinderState>,
+    pub multiline: bool,
 }
 
 #[derive(Debug)]
@@ -78,6 +80,9 @@ pub struct FilteredCandidate {
 pub enum TextInputAction {
     SetRevset,
     Describe,
+    AiDescribe {
+        change_id: String,
+    },
     BookmarkCreate,
     BookmarkDelete,
     BookmarkForget {
@@ -160,12 +165,19 @@ pub struct Model {
     pub fuzzy_viewport_height: usize,
     pub info_list: Option<Text<'static>>,
     pub text_input: Option<TextInputSession>,
+    pending_ai_describe: Option<PendingAiDescribe>,
 }
 
 #[derive(Debug)]
 enum ScrollDirection {
     Up,
     Down,
+}
+
+#[derive(Debug)]
+struct PendingAiDescribe {
+    change_id: String,
+    bookmarks: Vec<String>,
 }
 
 impl Model {
@@ -188,6 +200,7 @@ impl Model {
             fuzzy_viewport_height: 0,
             info_list: None,
             text_input: None,
+            pending_ai_describe: None,
             display_repository: format_repository_for_display(&repository),
             theme: terminal_theme_mode,
             global_args: GlobalArgs {
@@ -685,6 +698,7 @@ impl Model {
     pub fn clear(&mut self) {
         self.state = State::Running;
         self.text_input = None;
+        self.pending_ai_describe = None;
         self.info_list = None;
         self.saved_tree_position = None;
         self.saved_change_id = None;
@@ -727,6 +741,33 @@ impl Model {
             textarea,
             action,
             fuzzy: None,
+            multiline: false,
+        });
+    }
+
+    fn start_multiline_text_input(
+        &mut self,
+        prompt: &str,
+        initial_text: &str,
+        action: TextInputAction,
+    ) {
+        let lines: Vec<String> = if initial_text.is_empty() {
+            vec![String::new()]
+        } else {
+            initial_text.lines().map(str::to_string).collect()
+        };
+        let mut textarea = TextArea::new(lines);
+        textarea.move_cursor(CursorMove::End);
+        textarea.set_cursor_line_style(Style::default());
+
+        self.info_list = None;
+        self.state = State::EnteringText;
+        self.text_input = Some(TextInputSession {
+            prompt: prompt.to_string(),
+            textarea,
+            action,
+            fuzzy: None,
+            multiline: true,
         });
     }
 
@@ -753,7 +794,11 @@ impl Model {
                 }
             }
             None => {
-                let value = session.textarea.lines()[0].trim().to_string();
+                let value = if session.multiline {
+                    session.textarea.lines().join("\n").trim().to_string()
+                } else {
+                    session.textarea.lines()[0].trim().to_string()
+                };
                 if value.is_empty() {
                     self.cancelled()?;
                     None
@@ -814,6 +859,7 @@ impl Model {
                 filtered,
                 selected,
             }),
+            multiline: false,
         });
     }
 
@@ -1019,6 +1065,82 @@ impl Model {
         Ok(())
     }
 
+    pub fn start_ai_describe(&mut self) -> Result<()> {
+        let Some(change_id) = self.get_selected_change_id() else {
+            return self.invalid_selection();
+        };
+        let change_id = change_id.to_string();
+        let tree_pos = self.get_selected_tree_position();
+        let bookmarks = self
+            .jj_log
+            .get_tree_commit(&tree_pos)
+            .map(|commit| commit.bookmarks.clone())
+            .unwrap_or_default();
+
+        self.info_list = Some(Text::from("Generating…"));
+        self.pending_ai_describe = Some(PendingAiDescribe {
+            change_id,
+            bookmarks,
+        });
+        Ok(())
+    }
+
+    pub fn process_pending_ai_describe(&mut self) -> Result<()> {
+        let Some(pending) = self.pending_ai_describe.take() else {
+            return Ok(());
+        };
+
+        let command = match JjCommand::jj_config_get_ai_describe_command(
+            &self.global_args.repository,
+        ) {
+            Ok(Some(command)) => command,
+            Ok(None) => {
+                self.info_list = Some(Text::from(
+                    "No AI command configured. Set it with:\n  jj config set --user majjit.ai-describe-command '<command>'",
+                ));
+                return Ok(());
+            }
+            Err(err) => {
+                self.info_list = Some(err.to_string().into_text()?);
+                return Ok(());
+            }
+        };
+
+        let diff = match JjCommand::jj_diff_git(&pending.change_id, self.global_args.clone()).run()
+        {
+            Ok(diff) => diff,
+            Err(err) => {
+                self.info_list = Some(err.to_string().into_text()?);
+                return Ok(());
+            }
+        };
+
+        if diff.trim().is_empty() {
+            self.info_list = Some(Text::from(format!(
+                "No changes in {} to describe",
+                pending.change_id
+            )));
+            return Ok(());
+        }
+
+        match ai_describe::generate_message(&diff, &pending.bookmarks, &pending.change_id, &command)
+        {
+            Ok(message) => {
+                self.start_multiline_text_input(
+                    "AI describe (Ctrl+S to submit)",
+                    &message,
+                    TextInputAction::AiDescribe {
+                        change_id: pending.change_id,
+                    },
+                );
+            }
+            Err(err) => {
+                self.info_list = Some(err.to_string().into_text()?);
+            }
+        }
+        Ok(())
+    }
+
     fn apply_describe_from_input(&mut self, message: String) -> Result<()> {
         let Some(change_id) = self.get_selected_change_id() else {
             return self.invalid_selection();
@@ -1038,6 +1160,14 @@ impl Model {
         match action {
             TextInputAction::SetRevset => self.apply_set_revset_from_input(value),
             TextInputAction::Describe => self.apply_describe_from_input(value),
+            TextInputAction::AiDescribe { change_id } => {
+                let cmd = JjCommand::jj_describe_with_message(
+                    &change_id,
+                    &value,
+                    self.global_args.clone(),
+                );
+                self.queue_jj_command(cmd)
+            }
             TextInputAction::BookmarkCreate => self.apply_bookmark_create_from_input(value),
             TextInputAction::BookmarkDelete => self.apply_bookmark_delete_from_input(value),
             TextInputAction::BookmarkForget { include_remotes } => {
