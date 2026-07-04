@@ -27,6 +27,51 @@ Once you run the program you can press `?` to show the help info. Most of the co
 - Output from jj commands is displayed in the bottom panel.
 - Fuzzy matching for various features like selecting changes or bookmarks.
 - Mouse support: left click to select, right click to toggle folding, and scroll wheel to scroll.
+- Syntax-highlighted file diffs with line numbers, rendered through [delta](https://github.com/dandavison/delta) when it is installed.
+- Visual 3-way merge-conflict resolution with [meld](https://meldmerge.org/).
+- Draft commit messages with an AI command of your choice (press `da`), then review and edit before applying.
+
+## External tools
+
+Beyond `jj` itself, Majjit can shell out to a couple of external tools to improve
+diffs and conflict resolution:
+
+- **[delta](https://github.com/dandavison/delta)** (optional, recommended) — file
+  diffs in the log tree are piped through delta (`--color-only --line-numbers`) for
+  syntax highlighting and old/new line numbers. Delta is invoked with `--no-gitconfig`
+  so the output is deterministic regardless of your personal delta config, using a
+  dark (`Dracula`) theme. If `delta` is not on your `PATH`, Majjit falls back to
+  jj's own colored git diff.
+- **[meld](https://meldmerge.org/)** (required for conflict resolution) — the
+  `jj resolve` action opens meld as a visual 3-way merge editor, auto-merging the
+  clean hunks and presenting only the real conflicts for editing. Conflicts shown in
+  diffs use jj's `snapshot` conflict-marker style.
+
+## AI commit messages
+
+Majjit can draft a commit (describe) message for the selected change using an AI
+command you configure. Press `da` (Describe → AI generate) to run it; the generated
+message opens in an editable input panel so you can review and tweak it before it is
+applied with `jj describe`.
+
+Configure the command under the `[majjit]` table in your jj config
+(`jj config edit --user`). jj parses the value as TOML, so wrap the command in quotes:
+
+```toml
+[majjit]
+ai-describe-command = 'your-ai-cli --commit-message'
+```
+
+The change's diff is piped to the command on stdin (with an optional bookmark
+header), and these environment variables are exported for it to use:
+
+- `MAJJIT_AI_DESCRIBE_CHANGE_ID` — the change id being described
+- `MAJJIT_AI_DESCRIBE_BOOKMARKS` — space-separated bookmark names on the change
+- `MAJJIT_AI_DESCRIBE_DIFF_BYTES` — byte size of the diff
+
+The command should print the message to stdout. Markdown code fences and
+`<think>…</think>` reasoning blocks (emitted by some reasoning models) are stripped
+automatically.
 
 ## Supported jj commands
 

@@ -1,7 +1,7 @@
 use crate::ai_describe;
 use crate::{
     command_tree::{CommandTree, display_unbound_error_lines},
-    log_tree::{DIFF_HUNK_LINE_IDX, JjLog, LogTreeNode, TreePosition, get_parent_tree_position},
+    log_tree::{DIFF_LINE_IDX, JjLog, LogTreeNode, TreePosition, get_parent_tree_position},
     shell_out::{JjCommand, JjCommandError, open_file_in_editor},
     terminal::Term,
     update::{
@@ -621,7 +621,7 @@ impl Model {
 
     fn select_next_sibling_node(&mut self, tree_pos: TreePosition) -> Result<()> {
         let mut tree_pos = tree_pos;
-        if tree_pos.len() == DIFF_HUNK_LINE_IDX + 1 {
+        if tree_pos.len() == DIFF_LINE_IDX + 1 {
             tree_pos = get_parent_tree_position(&tree_pos).unwrap();
         }
         let idx = tree_pos[tree_pos.len() - 1];
@@ -655,7 +655,7 @@ impl Model {
     }
 
     fn select_prev_sibling_node(&mut self, tree_pos: TreePosition) -> Result<()> {
-        if tree_pos.len() == DIFF_HUNK_LINE_IDX + 1 {
+        if tree_pos.len() == DIFF_LINE_IDX + 1 {
             let parent_pos = get_parent_tree_position(&tree_pos).unwrap();
             let parent_node_idx = self.jj_log.get_tree_node(&parent_pos)?.flat_log_idx();
             self.log_select(parent_node_idx);

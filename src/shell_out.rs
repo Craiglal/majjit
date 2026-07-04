@@ -5,7 +5,11 @@ use anyhow::{Result, anyhow};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use regex::Regex;
-use std::{env, io::Read, process::Command};
+use std::{
+    env,
+    io::{Read, Write},
+    process::{Command, Stdio},
+};
 
 #[derive(Debug)]
 pub struct JjCommand {
@@ -151,6 +155,8 @@ impl JjCommand {
             "--config",
             "ui.diff-editor=:builtin",
             "--config",
+            "ui.conflict-marker-style=snapshot",
+            "--config",
             "ui.streampager.interface=full-screen-clear-output",
             "--config",
             "template-aliases.\"format_short_change_id(id)\"=format_short_id(id)",
@@ -243,16 +249,21 @@ impl JjCommand {
         Self::new_no_color(&diff_git_args(change_id), global_args, ReturnOutput::Stdout)
     }
 
-    pub fn jj_diff_file(change_id: &str, file: &str, global_args: GlobalArgs) -> Self {
-        let args = [
-            "diff",
-            "--ignore-working-copy",
-            "--color-words",
-            "--revisions",
-            change_id,
-            file,
-        ];
-        Self::new(&args, global_args, None, ReturnOutput::Stdout)
+    pub fn jj_diff_git_file(change_id: &str, file: &str, global_args: GlobalArgs) -> Self {
+        Self::new_no_color(
+            &diff_git_file_args(change_id, file),
+            global_args,
+            ReturnOutput::Stdout,
+        )
+    }
+
+    pub fn jj_diff_git_file_colored(change_id: &str, file: &str, global_args: GlobalArgs) -> Self {
+        Self::new(
+            &diff_git_file_args(change_id, file),
+            global_args,
+            None,
+            ReturnOutput::Stdout,
+        )
     }
 
     pub fn jj_diff_file_interactive(
@@ -469,7 +480,8 @@ impl JjCommand {
         global_args: GlobalArgs,
         term: Term,
     ) -> Self {
-        let mut args = vec!["resolve", "-r", change_id];
+        // meld auto-merges the clean hunks and presents only real conflicts for editing.
+        let mut args = vec!["resolve", "--tool", MERGE_TOOL, "-r", change_id];
         if let Some(file_path) = maybe_file_path {
             args.push(file_path);
         }
@@ -896,6 +908,99 @@ fn diff_git_args(change_id: &str) -> [&str; 5] {
         "--revisions",
         change_id,
     ]
+}
+
+fn diff_git_file_args<'a>(change_id: &'a str, file: &'a str) -> [&'a str; 6] {
+    [
+        "diff",
+        "--ignore-working-copy",
+        "--git",
+        "--revisions",
+        change_id,
+        file,
+    ]
+}
+
+/// Syntax-highlighting theme handed to delta. A dark theme, to match a dark terminal.
+const DELTA_SYNTAX_THEME: &str = "Dracula";
+
+/// 3-way merge tool used by `jj resolve`. meld's built-in jj config auto-merges the
+/// clean hunks (`--auto-merge`) and opens a visual editor for the real conflicts.
+const MERGE_TOOL: &str = "meld";
+
+/// Render a single file's diff to ANSI-colored text for the log tree.
+///
+/// When the `delta` pager is on `PATH`, a raw git-format diff is piped through it
+/// for richer syntax highlighting. Otherwise we fall back to jj's own colored git
+/// diff so the view keeps working without delta installed.
+pub fn rendered_file_diff(change_id: &str, file: &str, global_args: GlobalArgs) -> Result<String> {
+    if delta_available() {
+        let raw = JjCommand::jj_diff_git_file(change_id, file, global_args.clone()).run()?;
+        // If delta fails at runtime (an input it rejects, a flag/version mismatch),
+        // degrade to jj's own colored git diff rather than breaking the diff view.
+        if let Ok(rendered) = delta_render(&raw) {
+            return Ok(rendered);
+        }
+    }
+    Ok(JjCommand::jj_diff_git_file_colored(change_id, file, global_args).run()?)
+}
+
+/// Whether the `delta` binary is available on `PATH` (probed once, then cached).
+fn delta_available() -> bool {
+    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        Command::new("delta")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    })
+}
+
+/// Pipe a raw git-format diff through `delta` and return its ANSI-colored output.
+///
+/// `--color-only` leaves the diff structurally untouched (headers and +/- markers
+/// intact), so the output still maps line-for-line back to the input; `--no-gitconfig`
+/// keeps rendering independent of the user's personal delta configuration.
+fn delta_render(raw: &str) -> Result<String> {
+    let mut child = Command::new("delta")
+        .args([
+            "--color-only",
+            "--line-numbers",
+            "--no-gitconfig",
+            "--paging=never",
+            "--true-color=always",
+            "--width=variable",
+            "--syntax-theme",
+            DELTA_SYNTAX_THEME,
+        ])
+        // `--no-gitconfig` ignores git config, but delta still reads these env
+        // vars; clear them so rendering stays deterministic and single-column.
+        .env_remove("DELTA_FEATURES")
+        .env_remove("GIT_CONFIG_PARAMETERS")
+        .env_remove("BAT_THEME")
+        .env_remove("BAT_STYLE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    // Feed stdin from a scoped thread so a large diff can't deadlock against a
+    // full stdout pipe while we're still writing; the thread borrows `raw`.
+    let mut stdin = child.stdin.take().expect("delta stdin was piped");
+    let output = std::thread::scope(|s| {
+        s.spawn(move || {
+            let _ = stdin.write_all(raw.as_bytes());
+            // stdin dropped here -> EOF for delta
+        });
+        child.wait_with_output()
+    })?;
+
+    if !output.status.success() {
+        return Err(anyhow!("delta exited with {}", output.status));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[derive(Debug)]

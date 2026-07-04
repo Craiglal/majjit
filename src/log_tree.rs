@@ -1,5 +1,5 @@
 use crate::model::GlobalArgs;
-use crate::shell_out::JjCommand;
+use crate::shell_out::{JjCommand, rendered_file_diff};
 use ansi_to_tui::IntoText;
 use anyhow::{Error, Result, anyhow, bail};
 use ratatui::{
@@ -62,26 +62,17 @@ impl JjLog {
             bail!("Trying to get unloaded file diffs for commit");
         }
         let file_diff = &mut commit.file_diffs[file_diff_idx];
-        let diff_hunk_idx = if tree_pos.len() <= DIFF_HUNK_IDX {
+        let diff_line_idx = if tree_pos.len() <= DIFF_LINE_IDX {
             return Ok(file_diff);
         } else {
-            tree_pos[DIFF_HUNK_IDX]
+            tree_pos[DIFF_LINE_IDX]
         };
 
-        // Traverse to diff hunk
+        // Traverse to diff line
         if !file_diff.loaded {
-            bail!("Trying to get unloaded diff hunks for file diff");
+            bail!("Trying to get unloaded diff lines for file diff");
         }
-        let diff_hunk = &mut file_diff.diff_hunks[diff_hunk_idx];
-        let diff_hunk_line_idx = if tree_pos.len() <= DIFF_HUNK_LINE_IDX {
-            return Ok(diff_hunk);
-        } else {
-            tree_pos[DIFF_HUNK_LINE_IDX]
-        };
-
-        // Traverse to diff hunk line
-        let diff_hunk_line = &mut diff_hunk.diff_hunk_lines[diff_hunk_line_idx];
-        Ok(diff_hunk_line)
+        Ok(&mut file_diff.diff_lines[diff_line_idx])
     }
 
     pub fn get_tree_commit(&self, tree_pos: &TreePosition) -> Option<&Commit> {
@@ -114,7 +105,8 @@ impl JjLog {
         tree_pos: &TreePosition,
     ) -> Result<usize> {
         let mut tree_pos = tree_pos.clone();
-        tree_pos.truncate(DIFF_HUNK_IDX + 1);
+        // Folding applies at the file level at most; there is no per-hunk fold.
+        tree_pos.truncate(FILE_DIFF_IDX + 1);
         let node = self.get_tree_node(&tree_pos)?;
         node.toggle_fold(global_args)?;
         Ok(node.flat_log_idx())
@@ -137,8 +129,7 @@ pub trait LogTreeNode {
 pub type TreePosition = Vec<usize>;
 const COMMIT_OR_TEXT_IDX: usize = 0;
 const FILE_DIFF_IDX: usize = 1;
-const DIFF_HUNK_IDX: usize = 2;
-pub const DIFF_HUNK_LINE_IDX: usize = 3;
+pub const DIFF_LINE_IDX: usize = 2;
 
 pub fn get_parent_tree_position(tree_pos: &TreePosition) -> Option<TreePosition> {
     let mut tree_pos = tree_pos.clone();
@@ -484,7 +475,7 @@ pub struct FileDiff {
     graph_indent: String,
     unfolded: bool,
     loaded: bool,
-    diff_hunks: Vec<DiffHunk>,
+    diff_lines: Vec<DiffLine>,
     flat_log_idx: usize,
 }
 
@@ -539,7 +530,7 @@ impl FileDiff {
             graph_indent,
             unfolded: false,
             loaded: false,
-            diff_hunks: Vec::new(),
+            diff_lines: Vec::new(),
             flat_log_idx: 0,
         })
     }
@@ -593,10 +584,10 @@ impl LogTreeNode for FileDiff {
             return Ok(());
         }
 
-        for (diff_hunk_idx, diff_hunk) in self.diff_hunks.iter_mut().enumerate() {
+        for (diff_line_idx, diff_line) in self.diff_lines.iter_mut().enumerate() {
             let mut new_pos = tree_pos.clone();
-            new_pos.push(diff_hunk_idx);
-            diff_hunk.flatten(new_pos, log_list, log_list_tree_positions)?;
+            new_pos.push(diff_line_idx);
+            diff_line.flatten(new_pos, log_list, log_list_tree_positions)?;
         }
 
         Ok(())
@@ -607,9 +598,9 @@ impl LogTreeNode for FileDiff {
     }
 
     fn children(&self) -> Vec<&dyn LogTreeNode> {
-        self.diff_hunks
+        self.diff_lines
             .iter()
-            .map(|dh| dh as &dyn LogTreeNode)
+            .map(|dl| dl as &dyn LogTreeNode)
             .collect()
     }
 
@@ -617,9 +608,8 @@ impl LogTreeNode for FileDiff {
         self.unfolded = !self.unfolded;
 
         if !self.loaded {
-            let diff_hunks =
-                DiffHunk::load_all(global_args, &self.change_id, &self.path, &self.graph_indent)?;
-            self.diff_hunks = diff_hunks;
+            self.diff_lines =
+                DiffLine::load_all(global_args, &self.change_id, &self.path, &self.graph_indent)?;
             self.loaded = true;
         }
 
@@ -665,97 +655,19 @@ impl fmt::Display for FileDiffStatus {
 }
 
 #[derive(Debug)]
-struct DiffHunk {
+struct DiffLine {
+    ansi_string: String,
     graph_indent: String,
-    unfolded: bool,
-    diff_hunk_lines: Vec<DiffHunkLine>,
-    red_start: u32,
-    red_end: u32,
-    green_start: u32,
-    green_end: u32,
     flat_log_idx: usize,
 }
 
-enum SearchDirection {
-    Down,
-    Up,
-}
-
-impl DiffHunk {
-    fn new(graph_indent: String, diff_hunk_lines: Vec<DiffHunkLine>) -> Result<Self> {
-        let (red_start, green_start) =
-            Self::find_line_nums(&diff_hunk_lines, SearchDirection::Down)?;
-        let (red_end, green_end) = Self::find_line_nums(&diff_hunk_lines, SearchDirection::Up)?;
-
-        // Align line nums
-        let max_line_num = red_end.max(green_end);
-        let line_num_chars_len = max_line_num.checked_ilog10().unwrap_or(0) as usize;
-        let mut diff_hunk_lines = diff_hunk_lines;
-        for line in diff_hunk_lines.iter_mut() {
-            line.ansi_string = line.ansi_string.replacen(
-                &" ".repeat(3_usize.saturating_sub(line_num_chars_len)),
-                "",
-                1,
-            );
-        }
-
-        Ok(Self {
+impl DiffLine {
+    fn new(ansi_string: String, graph_indent: String) -> Self {
+        Self {
+            ansi_string,
             graph_indent,
-            unfolded: true,
-            diff_hunk_lines,
-            red_start,
-            red_end,
-            green_start,
-            green_end,
             flat_log_idx: 0,
-        })
-    }
-
-    fn find_line_nums(
-        diff_hunk_lines: &[DiffHunkLine],
-        direction: SearchDirection,
-    ) -> Result<(u32, u32)> {
-        let line_nums_regex = Regex::new(r"^\s*(\d+)?\s+(\d+)?:").unwrap();
-        let mut red: Option<String> = None;
-        let mut green: Option<String> = None;
-
-        let hunk_lines: Vec<&DiffHunkLine> = match direction {
-            SearchDirection::Down => diff_hunk_lines.iter().collect(),
-            SearchDirection::Up => diff_hunk_lines.iter().rev().collect(),
-        };
-        for line in hunk_lines.iter().map(|l| strip_ansi(&l.ansi_string)) {
-            if matches!(line.trim(), "~" | "(binary)" | "(empty)") {
-                continue;
-            }
-            let captures = line_nums_regex
-                .captures(&line)
-                .ok_or_else(|| anyhow!("Cannot parse diff hunk line: {line:?}"))?;
-            if red.is_none()
-                && let Some(num_match) = captures.get(1)
-                && !num_match.is_empty()
-            {
-                red = Some(num_match.as_str().to_string())
-            }
-            if green.is_none()
-                && let Some(num_match) = captures.get(2)
-                && !num_match.is_empty()
-            {
-                green = Some(num_match.as_str().to_string())
-            }
-
-            if red.is_some() && green.is_some() {
-                break;
-            }
         }
-
-        if red.is_none() {
-            red = Some("0".to_string());
-        }
-        if green.is_none() {
-            green = Some("0".to_string());
-        }
-
-        Ok((red.unwrap().parse()?, green.unwrap().parse()?))
     }
 
     fn load_all(
@@ -764,150 +676,61 @@ impl DiffHunk {
         file: &str,
         graph_indent: &str,
     ) -> Result<Vec<Self>> {
-        let output = JjCommand::jj_diff_file(change_id, file, global_args.clone()).run()?;
-        let output_lines: Vec<&str> = output.trim().lines().skip(1).collect();
+        let output = rendered_file_diff(change_id, file, global_args.clone())?;
+        let lines: Vec<&str> = output.lines().collect();
 
-        let separator_regex = Regex::new(r"^\s*\.\.\.\s*$")?;
-        let mut diff_hunks: Vec<DiffHunk> = Vec::new();
-        let mut diff_hunk_lines = Vec::new();
+        let mut diff_lines: Vec<Self> = diff_body(&lines)
+            .into_iter()
+            .map(|line| Self::new(line.to_string(), graph_indent.to_string()))
+            .collect();
 
-        let mut push_diff_hunk = |diff_hunk_lines: Vec<DiffHunkLine>| -> Result<()> {
-            if !diff_hunk_lines.is_empty() {
-                diff_hunks.push(Self::new(graph_indent.to_string(), diff_hunk_lines)?);
-            }
-            Ok(())
-        };
-
-        for line in output_lines {
-            let clean_line = strip_ansi(line);
-
-            if separator_regex.is_match(&clean_line) {
-                push_diff_hunk(diff_hunk_lines)?;
-                diff_hunk_lines = Vec::new();
-            } else {
-                diff_hunk_lines.push(DiffHunkLine::new(
-                    line.to_string(),
-                    graph_indent.to_string(),
-                ));
-            }
+        // Visual divider between this file's diff and the next item in the log list
+        if !diff_lines.is_empty() {
+            diff_lines.push(Self::new(
+                "\x1b[35m~\x1b[0m".to_string(),
+                graph_indent.to_string(),
+            ));
         }
 
-        push_diff_hunk(diff_hunk_lines)?;
-
-        // Visual divider between hunk diff and next item in log list
-        if !diff_hunks.is_empty() {
-            diff_hunks
-                .last_mut()
-                .unwrap()
-                .diff_hunk_lines
-                .push(DiffHunkLine::new(
-                    "\x1b[35m~\x1b[0m".to_string(),
-                    graph_indent.to_string(),
-                ));
-        }
-
-        Ok(diff_hunks)
+        Ok(diff_lines)
     }
 }
 
-impl LogTreeNode for DiffHunk {
-    fn render(&self) -> Result<Text<'static>> {
-        let red_num_lines = if self.red_end == 0 {
-            0
-        } else {
-            self.red_end - self.red_start + 1
-        };
-        let green_num_lines = if self.green_end == 0 {
-            0
-        } else {
-            self.green_end - self.green_start + 1
-        };
-
-        let line = Line::from(vec![
-            Span::raw(self.graph_indent.clone()),
-            fold_symbol(self.unfolded),
-            Span::raw(" "),
-            Span::styled(
-                format!(
-                    "@@ -{},{} +{},{} @@",
-                    self.red_start, red_num_lines, self.green_start, green_num_lines,
-                ),
-                Style::default().fg(Color::Magenta),
-            ),
-        ]);
-        Ok(Text::from(line))
-    }
-
-    fn flatten(
-        &mut self,
-        tree_pos: TreePosition,
-        log_list: &mut Vec<Text<'static>>,
-        log_list_tree_positions: &mut Vec<TreePosition>,
-    ) -> Result<()> {
-        self.flat_log_idx = log_list.len();
-        log_list.push(self.render()?);
-        log_list_tree_positions.push(tree_pos.clone());
-
-        if !self.unfolded {
-            return Ok(());
-        }
-
-        for (diff_hunk_line_idx, diff_hunk_line) in self.diff_hunk_lines.iter_mut().enumerate() {
-            let mut new_pos = tree_pos.clone();
-            new_pos.push(diff_hunk_line_idx);
-            diff_hunk_line.flatten(new_pos, log_list, log_list_tree_positions)?;
-        }
-
-        Ok(())
-    }
-
-    fn flat_log_idx(&self) -> usize {
-        self.flat_log_idx
-    }
-
-    fn children(&self) -> Vec<&dyn LogTreeNode> {
-        self.diff_hunk_lines
+/// Extract the displayable body of a single file's git diff.
+///
+/// delta (and jj's colored git diff) emit the standard git file headers
+/// (`diff --git`, `index`, `--- a/…`, `+++ b/…`) ahead of the hunks. Those repeat
+/// the path already shown on the file node, so we keep only the lines from the
+/// first hunk header (`@@`) onward. A file with no textual hunk (binary, a
+/// mode-only change, or a pure rename) has no `@@`; there we drop just the
+/// redundant `diff --git`/`index` lines and keep the remaining metadata (mode,
+/// rename, or `Binary files …`) so the file still shows why it changed rather
+/// than expanding to nothing.
+fn diff_body<'a>(lines: &[&'a str]) -> Vec<&'a str> {
+    if let Some(start) = lines
+        .iter()
+        .position(|line| strip_ansi(line).starts_with("@@"))
+    {
+        lines[start..].to_vec()
+    } else {
+        lines
             .iter()
-            .map(|hl| hl as &dyn LogTreeNode)
+            .copied()
+            .filter(|line| {
+                let clean = strip_ansi(line);
+                !clean.starts_with("diff --git") && !clean.starts_with("index ")
+            })
             .collect()
     }
-
-    fn toggle_fold(&mut self, _global_args: &GlobalArgs) -> Result<()> {
-        self.unfolded = !self.unfolded;
-        Ok(())
-    }
 }
 
-#[derive(Debug)]
-struct DiffHunkLine {
-    ansi_string: String,
-    graph_indent: String,
-    flat_log_idx: usize,
-}
-
-impl DiffHunkLine {
-    fn new(ansi_string: String, graph_indent: String) -> Self {
-        Self {
-            ansi_string,
-            graph_indent,
-            flat_log_idx: 0,
-        }
-    }
-}
-
-impl LogTreeNode for DiffHunkLine {
+impl LogTreeNode for DiffLine {
     fn render(&self) -> Result<Text<'static>> {
-        let clean_string = strip_ansi(&self.ansi_string);
         let mut line = Line::from(vec![Span::raw(self.graph_indent.clone()), Span::raw("  ")]);
 
-        for span in self.ansi_string.into_text()?.lines[0].spans.clone() {
-            let span = if clean_string.starts_with("+") || clean_string.starts_with("-") {
-                let style = span.style.bold();
-                span.style(style)
-            } else {
-                span
-            };
-            line.spans.push(span);
+        let text = self.ansi_string.into_text()?;
+        if let Some(first) = text.lines.first() {
+            line.spans.extend(first.spans.iter().cloned());
         }
 
         Ok(Text::from(line))
@@ -946,4 +769,120 @@ fn fold_symbol(unfolded: bool) -> Span<'static> {
 fn strip_ansi(ansi_str: &str) -> String {
     let ansi_regex = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
     ansi_regex.replace_all(ansi_str, "").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diff_body_keeps_lines_from_first_hunk_onward() {
+        let lines = vec![
+            "diff --git a/foo.rs b/foo.rs",
+            "index 111..222 100644",
+            "--- a/foo.rs",
+            "+++ b/foo.rs",
+            "@@ -1,2 +1,2 @@",
+            " context",
+            "-removed",
+            "+added",
+        ];
+        assert_eq!(
+            diff_body(&lines),
+            vec!["@@ -1,2 +1,2 @@", " context", "-removed", "+added"],
+        );
+    }
+
+    #[test]
+    fn diff_body_keeps_every_hunk() {
+        let lines = vec![
+            "diff --git a/foo b/foo",
+            "@@ -1,1 +1,1 @@",
+            "-a",
+            "+b",
+            "@@ -10,1 +10,1 @@",
+            "-c",
+            "+d",
+        ];
+        let body = diff_body(&lines);
+        assert_eq!(body.len(), 6);
+        assert!(body[0].starts_with("@@"));
+    }
+
+    #[test]
+    fn diff_body_detects_hunk_through_ansi_color() {
+        let lines = vec![
+            "\x1b[1mdiff --git a/f b/f\x1b[0m",
+            "\x1b[36m@@ -1,1 +1,1 @@\x1b[0m",
+            "\x1b[32m+x\x1b[0m",
+        ];
+        let body = diff_body(&lines);
+        assert_eq!(body.len(), 2);
+        assert!(strip_ansi(body[0]).starts_with("@@"));
+    }
+
+    #[test]
+    fn diff_body_content_line_starting_with_at_is_not_a_header() {
+        // A context line whose file content begins with "@@" keeps its leading
+        // space marker, so it must not be mistaken for a hunk header.
+        let lines = vec![
+            "diff --git a/f b/f",
+            "@@ -1,1 +1,1 @@",
+            " @@ this is content",
+        ];
+        let body = diff_body(&lines);
+        assert_eq!(body, vec!["@@ -1,1 +1,1 @@", " @@ this is content"]);
+    }
+
+    #[test]
+    fn diff_body_binary_file_keeps_only_binary_notice() {
+        let lines = vec![
+            "diff --git a/img.png b/img.png",
+            "index 111..222 100644",
+            "Binary files a/img.png and b/img.png differ",
+        ];
+        assert_eq!(
+            diff_body(&lines),
+            vec!["Binary files a/img.png and b/img.png differ"],
+        );
+    }
+
+    #[test]
+    fn diff_body_hunkless_diff_keeps_metadata() {
+        // A pure rename has no `@@`; keep the informative rename lines but drop
+        // the redundant `diff --git` header (so the file doesn't expand to nothing).
+        let lines = vec!["diff --git a/old b/new", "rename from old", "rename to new"];
+        assert_eq!(diff_body(&lines), vec!["rename from old", "rename to new"]);
+    }
+
+    #[test]
+    fn diff_body_mode_change_keeps_mode_lines_drops_index() {
+        let lines = vec![
+            "diff --git a/s.sh b/s.sh",
+            "old mode 100644",
+            "new mode 100755",
+        ];
+        assert_eq!(diff_body(&lines), vec!["old mode 100644", "new mode 100755"]);
+    }
+
+    #[test]
+    fn diff_line_renders_true_color_delta_output() {
+        // A representative `delta --color-only` line: 24-bit background + foreground,
+        // a combined SGR sequence, and the leading '+' marker preserved as content.
+        let ansi = "\x1b[48;2;0;40;0m+\x1b[38;2;248;248;242m    \
+                     \x1b[48;2;0;96;0;38;2;255;121;198mlet x = 1;\x1b[0m";
+        let diff_line = DiffLine::new(ansi.to_string(), "│ ".to_string());
+
+        let text = diff_line.render().expect("rendering delta output must not fail");
+
+        assert_eq!(text.lines.len(), 1);
+        let rendered: String = text.lines[0]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        // graph indent ("│ ") + the two-space gutter, then delta's content verbatim.
+        assert!(rendered.starts_with("│   "), "got {rendered:?}");
+        assert!(rendered.contains("+    let x = 1;"), "got {rendered:?}");
+    }
 }
