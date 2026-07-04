@@ -419,6 +419,12 @@ impl CommandTree {
                 CommandTreeNode::new_action(Message::Describe),
             ),
             (
+                "Describe",
+                "AI generate",
+                vec![KeyCode::Char('d'), KeyCode::Char('a')],
+                CommandTreeNode::new_action(Message::AiDescribe),
+            ),
+            (
                 "Commands",
                 "Duplicate",
                 vec![KeyCode::Char('D')],

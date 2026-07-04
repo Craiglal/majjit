@@ -41,6 +41,7 @@ pub enum Message {
     Commit,
     Describe,
     DescribeInline,
+    AiDescribe,
     Duplicate {
         destination_type: DuplicateDestinationType,
         destination: DuplicateDestination,
@@ -377,6 +378,7 @@ pub enum ViewMode {
 
 pub fn update(terminal: Term, model: &mut Model) -> Result<()> {
     model.process_jj_command_queue()?;
+    model.process_pending_ai_describe()?;
 
     let mut current_msg = handle_event(model)?;
     while let Some(msg) = current_msg {
@@ -430,9 +432,13 @@ fn handle_key(model: &mut Model, key: event::KeyEvent) -> Option<Message> {
                 }
             };
         }
-        return match key.code {
-            KeyCode::Esc => Some(Message::Clear),
-            KeyCode::Enter => Some(Message::SubmitTextInput),
+        let multiline = model.text_input.as_ref().is_some_and(|s| s.multiline);
+        return match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) => Some(Message::Clear),
+            (KeyCode::Char('s'), m) if multiline && m.contains(KeyModifiers::CONTROL) => {
+                Some(Message::SubmitTextInput)
+            }
+            (KeyCode::Enter, _) if !multiline => Some(Message::SubmitTextInput),
             _ => {
                 model.forward_text_input_key(key);
                 None
@@ -532,6 +538,7 @@ fn handle_msg(term: Term, model: &mut Model, msg: Message) -> Result<Option<Mess
         Message::Custom => model.jj_custom()?,
         Message::Describe => model.jj_describe(term)?,
         Message::DescribeInline => model.start_describe_input()?,
+        Message::AiDescribe => model.start_ai_describe()?,
         Message::Duplicate {
             destination_type,
             destination,
