@@ -304,6 +304,17 @@ impl JjCommand {
         Self::new(&args, global_args, None, ReturnOutput::Stderr)
     }
 
+    /// Fetch a change's full description text (all lines, not just the first).
+    /// Non-interactive; `.run()` returns the raw description — trim before use.
+    #[allow(dead_code)]
+    pub fn jj_description(change_id: &str, global_args: GlobalArgs) -> Self {
+        Self::new_no_color(
+            &description_args(change_id),
+            global_args,
+            ReturnOutput::Stdout,
+        )
+    }
+
     pub fn jj_duplicate(
         change_id: &str,
         destination_type: Option<&str>,
@@ -910,6 +921,19 @@ fn diff_git_args(change_id: &str) -> [&str; 5] {
     ]
 }
 
+#[allow(dead_code)]
+fn description_args(change_id: &str) -> [&str; 7] {
+    [
+        "log",
+        "--ignore-working-copy",
+        "--no-graph",
+        "--revisions",
+        change_id,
+        "-T",
+        "description",
+    ]
+}
+
 fn diff_git_file_args<'a>(change_id: &'a str, file: &'a str) -> [&'a str; 6] {
     [
         "diff",
@@ -1074,6 +1098,22 @@ mod tests {
                 "--git",
                 "--revisions",
                 "abc123"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_description_args() {
+        assert_eq!(
+            description_args("abc123"),
+            [
+                "log",
+                "--ignore-working-copy",
+                "--no-graph",
+                "--revisions",
+                "abc123",
+                "-T",
+                "description",
             ]
         );
     }
