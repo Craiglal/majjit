@@ -414,7 +414,7 @@ impl CommandTree {
             ),
             (
                 "Describe",
-                "Selection in editor",
+                "Selection (multi-line)",
                 vec![KeyCode::Char('d'), KeyCode::Char('D')],
                 CommandTreeNode::new_action(Message::Describe),
             ),

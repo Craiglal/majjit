@@ -290,11 +290,6 @@ impl JjCommand {
         Self::new_skip_sync(&args, global_args, Some(term), ReturnOutput::Stderr)
     }
 
-    pub fn jj_describe(change_id: &str, global_args: GlobalArgs, term: Term) -> Self {
-        let args = ["describe", change_id];
-        Self::new(&args, global_args, Some(term), ReturnOutput::Stderr)
-    }
-
     pub fn jj_describe_with_message(
         change_id: &str,
         message: &str,
