@@ -306,7 +306,6 @@ impl JjCommand {
 
     /// Fetch a change's full description text (all lines, not just the first).
     /// Non-interactive; `.run()` returns the raw description — trim before use.
-    #[allow(dead_code)]
     pub fn jj_description(change_id: &str, global_args: GlobalArgs) -> Self {
         Self::new_no_color(
             &description_args(change_id),
@@ -921,7 +920,6 @@ fn diff_git_args(change_id: &str) -> [&str; 5] {
     ]
 }
 
-#[allow(dead_code)]
 fn description_args(change_id: &str) -> [&str; 7] {
     [
         "log",

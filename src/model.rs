@@ -1739,12 +1739,30 @@ impl Model {
         self.queue_jj_command(cmd)
     }
 
-    pub fn jj_describe(&mut self, term: Term) -> Result<()> {
+    pub fn start_describe_editor(&mut self) -> Result<()> {
         let Some(change_id) = self.get_selected_change_id() else {
             return self.invalid_selection();
         };
-        let cmd = JjCommand::jj_describe(change_id, self.global_args.clone(), term);
-        self.queue_jj_command(cmd)
+        let change_id = change_id.to_string();
+
+        // Fetch the FULL current description. Seeding the editor from only the
+        // first line would let a submit (`jj describe -m ...`) silently discard
+        // an existing multi-line body.
+        let description =
+            match JjCommand::jj_description(&change_id, self.global_args.clone()).run() {
+                Ok(text) => text.trim().to_string(),
+                Err(err) => {
+                    self.info_list = Some(err.to_string().into_text()?);
+                    return Ok(());
+                }
+            };
+
+        self.start_multiline_text_input(
+            "Describe (Ctrl+S to submit)",
+            &description,
+            TextInputAction::Describe,
+        );
+        Ok(())
     }
 
     pub fn jj_duplicate(

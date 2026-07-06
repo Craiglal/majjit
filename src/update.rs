@@ -536,7 +536,7 @@ fn handle_msg(term: Term, model: &mut Model, msg: Message) -> Result<Option<Mess
         Message::BookmarkUntrack => model.jj_bookmark_untrack()?,
         Message::Commit => model.jj_commit(term)?,
         Message::Custom => model.jj_custom()?,
-        Message::Describe => model.jj_describe(term)?,
+        Message::Describe => model.start_describe_editor()?,
         Message::DescribeInline => model.start_describe_input()?,
         Message::AiDescribe => model.start_ai_describe()?,
         Message::Duplicate {
