@@ -330,6 +330,22 @@ impl JjCommand {
         Self::new(&args, global_args, None, ReturnOutput::Stderr)
     }
 
+    #[allow(dead_code)]
+    // wired into the Merge command in a follow-up task
+    pub fn jj_new_merge(
+        first_parent: &str,
+        second_parent: &str,
+        message: &str,
+        global_args: GlobalArgs,
+    ) -> Self {
+        Self::new(
+            &new_merge_args(first_parent, second_parent, message),
+            global_args,
+            None,
+            ReturnOutput::Stderr,
+        )
+    }
+
     pub fn jj_parallelize(revset: &str, global_args: GlobalArgs) -> Self {
         let args = ["parallelize", revset];
         Self::new(&args, global_args, None, ReturnOutput::Stderr)
@@ -915,6 +931,10 @@ fn diff_git_args(change_id: &str) -> [&str; 5] {
     ]
 }
 
+fn new_merge_args<'a>(first: &'a str, second: &'a str, message: &'a str) -> [&'a str; 5] {
+    ["new", "--message", message, first, second]
+}
+
 fn description_args(change_id: &str) -> [&str; 7] {
     [
         "log",
@@ -1107,6 +1127,24 @@ mod tests {
                 "abc123",
                 "-T",
                 "description",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_new_merge_args() {
+        assert_eq!(
+            new_merge_args(
+                "main@origin",
+                "feat/variables",
+                "Merge feat/variables into main"
+            ),
+            [
+                "new",
+                "--message",
+                "Merge feat/variables into main",
+                "main@origin",
+                "feat/variables",
             ]
         );
     }

@@ -131,11 +131,9 @@ mod tests {
 
     #[test]
     fn test_strip_reasoning_removes_think_block() {
-        let input = "<think>\nlet me reason\nabout this change\n</think>\n\nAdd name parameter to greet\n";
-        assert_eq!(
-            strip_reasoning(input).trim(),
-            "Add name parameter to greet"
-        );
+        let input =
+            "<think>\nlet me reason\nabout this change\n</think>\n\nAdd name parameter to greet\n";
+        assert_eq!(strip_reasoning(input).trim(), "Add name parameter to greet");
     }
 
     #[test]

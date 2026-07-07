@@ -862,7 +862,10 @@ mod tests {
             "old mode 100644",
             "new mode 100755",
         ];
-        assert_eq!(diff_body(&lines), vec!["old mode 100644", "new mode 100755"]);
+        assert_eq!(
+            diff_body(&lines),
+            vec!["old mode 100644", "new mode 100755"]
+        );
     }
 
     #[test]
@@ -873,7 +876,9 @@ mod tests {
                      \x1b[48;2;0;96;0;38;2;255;121;198mlet x = 1;\x1b[0m";
         let diff_line = DiffLine::new(ansi.to_string(), "│ ".to_string());
 
-        let text = diff_line.render().expect("rendering delta output must not fail");
+        let text = diff_line
+            .render()
+            .expect("rendering delta output must not fail");
 
         assert_eq!(text.lines.len(), 1);
         let rendered: String = text.lines[0]
