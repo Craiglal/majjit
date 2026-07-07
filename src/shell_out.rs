@@ -330,8 +330,6 @@ impl JjCommand {
         Self::new(&args, global_args, None, ReturnOutput::Stderr)
     }
 
-    #[allow(dead_code)]
-    // wired into the Merge command in a follow-up task
     pub fn jj_new_merge(
         first_parent: &str,
         second_parent: &str,

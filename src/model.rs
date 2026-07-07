@@ -34,8 +34,6 @@ const LOG_LIST_SCROLL_PADDING: usize = 5;
 /// message. Prefers the first bookmark (with any `@<remote>` suffix stripped so
 /// `main@origin` reads as `main`), then the description first line, then the
 /// change id.
-#[allow(dead_code)]
-// used by the Merge command's default message in a follow-up task
 fn merge_parent_label(
     bookmarks: &[String],
     description_first_line: Option<&str>,
@@ -134,6 +132,10 @@ pub enum TextInputAction {
     },
     NewAtTarget,
     NewRevsets,
+    MergeMessage {
+        first_parent: String,
+        second_parent: String,
+    },
     NextPrevOffset {
         direction: NextPrevDirection,
         mode: NextPrevMode,
@@ -1229,6 +1231,10 @@ impl Model {
             TextInputAction::NewAtTarget | TextInputAction::NewRevsets => {
                 self.apply_new_from_input(value)
             }
+            TextInputAction::MergeMessage {
+                first_parent,
+                second_parent,
+            } => self.apply_merge_from_input(first_parent, second_parent, value),
             TextInputAction::NextPrevOffset { direction, mode } => {
                 self.apply_next_prev_from_input(direction, mode, value)
             }
@@ -2112,6 +2118,77 @@ impl Model {
     pub fn jj_new_revsets(&mut self) -> Result<()> {
         self.start_text_input("Revsets", "", TextInputAction::NewRevsets);
         Ok(())
+    }
+
+    pub fn jj_merge(&mut self) -> Result<()> {
+        let Some(first_parent) = self.get_saved_change_id() else {
+            return self.invalid_selection();
+        };
+        let first_parent = first_parent.to_string();
+
+        let Some(second_parent) = self.get_selected_change_id() else {
+            return self.invalid_selection();
+        };
+        let second_parent = second_parent.to_string();
+
+        if first_parent == second_parent {
+            return self.invalid_selection();
+        }
+
+        let first_label = self
+            .saved_tree_position
+            .as_ref()
+            .and_then(|pos| self.jj_log.get_tree_commit(pos))
+            .map(|commit| {
+                merge_parent_label(
+                    &commit.bookmarks,
+                    commit.description_first_line.as_deref(),
+                    &commit.change_id,
+                )
+            })
+            .unwrap_or_else(|| first_parent.clone());
+
+        let selected_pos = self.get_selected_tree_position();
+        let second_label = self
+            .jj_log
+            .get_tree_commit(&selected_pos)
+            .map(|commit| {
+                merge_parent_label(
+                    &commit.bookmarks,
+                    commit.description_first_line.as_deref(),
+                    &commit.change_id,
+                )
+            })
+            .unwrap_or_else(|| second_parent.clone());
+
+        let default_message = format!("Merge {second_label} into {first_label}");
+        self.start_text_input(
+            "Merge message",
+            &default_message,
+            TextInputAction::MergeMessage {
+                first_parent,
+                second_parent,
+            },
+        );
+        Ok(())
+    }
+
+    fn apply_merge_from_input(
+        &mut self,
+        first_parent: String,
+        second_parent: String,
+        message: String,
+    ) -> Result<()> {
+        if message.trim().is_empty() {
+            return Ok(());
+        }
+        let cmd = JjCommand::jj_new_merge(
+            &first_parent,
+            &second_parent,
+            &message,
+            self.global_args.clone(),
+        );
+        self.queue_jj_command(cmd)
     }
 
     fn apply_next_prev_from_input(

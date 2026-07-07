@@ -75,6 +75,7 @@ pub enum Message {
     NewAfterTrunkSync,
     NewAtTarget,
     NewRevsets,
+    Merge,
     NextPrev {
         direction: NextPrevDirection,
         mode: NextPrevMode,
@@ -556,6 +557,7 @@ fn handle_msg(term: Term, model: &mut Model, msg: Message) -> Result<Option<Mess
         Message::NewAfterTrunkSync => model.jj_new_after_trunk_sync()?,
         Message::NewAtTarget => model.jj_new_at_target()?,
         Message::NewRevsets => model.jj_new_revsets()?,
+        Message::Merge => model.jj_merge()?,
         Message::NextPrev {
             direction,
             mode,

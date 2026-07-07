@@ -931,6 +931,18 @@ impl CommandTree {
                 CommandTreeNode::new_action(Message::NewRevsets),
             ),
             (
+                "New",
+                "Merge (save 1st parent)",
+                vec![KeyCode::Char('n'), KeyCode::Char('g')],
+                CommandTreeNode::new_action_with_children(Message::SaveSelection),
+            ),
+            (
+                "Merge",
+                "Select 2nd parent + message",
+                vec![KeyCode::Char('n'), KeyCode::Char('g'), KeyCode::Enter],
+                CommandTreeNode::new_action(Message::Merge),
+            ),
+            (
                 "Commands",
                 "Next",
                 vec![KeyCode::Char('N')],
