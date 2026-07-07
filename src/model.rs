@@ -30,6 +30,26 @@ pub const DEFAULT_REVSET: &str =
 
 const LOG_LIST_SCROLL_PADDING: usize = 5;
 
+/// Build a human-readable label for a merge parent used in the default merge
+/// message. Prefers the first bookmark (with any `@<remote>` suffix stripped so
+/// `main@origin` reads as `main`), then the description first line, then the
+/// change id.
+#[allow(dead_code)]
+// used by the Merge command's default message in a follow-up task
+fn merge_parent_label(
+    bookmarks: &[String],
+    description_first_line: Option<&str>,
+    change_id: &str,
+) -> String {
+    if let Some(bookmark) = bookmarks.first() {
+        return bookmark.split('@').next().unwrap_or(bookmark).to_string();
+    }
+    if let Some(description) = description_first_line.filter(|d| !d.is_empty()) {
+        return description.to_string();
+    }
+    change_id.to_string()
+}
+
 #[derive(Default, Debug, PartialEq, Eq)]
 pub enum State {
     #[default]
@@ -2817,5 +2837,39 @@ fn format_repository_for_display(repository: &str) -> String {
     match repository.strip_prefix(&home_prefix) {
         Some(relative_path) => format!("~/{relative_path}"),
         None => repository.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_parent_label_strips_remote_suffix() {
+        assert_eq!(
+            merge_parent_label(&["main@origin".to_string()], Some("some desc"), "abcd1234"),
+            "main"
+        );
+    }
+
+    #[test]
+    fn test_merge_parent_label_local_bookmark_unchanged() {
+        assert_eq!(
+            merge_parent_label(&["feat/variables".to_string()], None, "abcd1234"),
+            "feat/variables"
+        );
+    }
+
+    #[test]
+    fn test_merge_parent_label_falls_back_to_description() {
+        assert_eq!(
+            merge_parent_label(&[], Some("Fix the thing"), "abcd1234"),
+            "Fix the thing"
+        );
+    }
+
+    #[test]
+    fn test_merge_parent_label_falls_back_to_change_id() {
+        assert_eq!(merge_parent_label(&[], None, "abcd1234"), "abcd1234");
     }
 }
