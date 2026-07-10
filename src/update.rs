@@ -595,7 +595,7 @@ fn handle_msg(term: Term, model: &mut Model, msg: Message) -> Result<Option<Mess
             destination_type,
             destination,
             parallel,
-        } => model.jj_split(destination_type, destination, parallel, term)?,
+        } => model.start_split_editor(destination_type, destination, parallel)?,
         Message::SplitCustom => model.jj_split_custom()?,
         Message::Status => model.jj_status(term)?,
         Message::Undo => model.jj_undo()?,

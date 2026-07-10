@@ -104,6 +104,12 @@ pub enum TextInputAction {
     Commit {
         file_path: Option<String>,
     },
+    Split {
+        change_id: String,
+        destination_type: Option<String>,
+        destination: Option<String>,
+        parallel: bool,
+    },
     BookmarkCreate,
     BookmarkDelete,
     BookmarkForget {
@@ -1198,6 +1204,23 @@ impl Model {
                     &value,
                     file_path.as_deref(),
                     self.global_args.clone(),
+                );
+                self.queue_jj_command(cmd)
+            }
+            TextInputAction::Split {
+                change_id,
+                destination_type,
+                destination,
+                parallel,
+            } => {
+                let cmd = JjCommand::jj_split(
+                    &change_id,
+                    &value,
+                    destination_type.as_deref(),
+                    destination.as_deref(),
+                    parallel,
+                    self.global_args.clone(),
+                    term,
                 );
                 self.queue_jj_command(cmd)
             }
@@ -2636,12 +2659,11 @@ impl Model {
         self.queue_jj_command(cmd)
     }
 
-    pub fn jj_split(
+    pub fn start_split_editor(
         &mut self,
         destination_type: SplitDestinationType,
         destination: SplitDestination,
         parallel: bool,
-        term: Term,
     ) -> Result<()> {
         let (change_id, destination_type) = match destination_type {
             SplitDestinationType::Default => (self.get_selected_change_id(), None),
@@ -2656,25 +2678,41 @@ impl Model {
         let Some(change_id) = change_id else {
             return self.invalid_selection();
         };
+        let change_id = change_id.to_string();
         let destination = match destination {
             SplitDestination::Default => None,
             SplitDestination::Selection => {
                 let Some(destination) = self.get_selected_change_id() else {
                     return self.invalid_selection();
                 };
-                Some(destination)
+                Some(destination.to_string())
             }
         };
 
-        let cmd = JjCommand::jj_split(
-            change_id,
-            destination_type,
-            destination,
-            parallel,
-            self.global_args.clone(),
-            term,
+        // Fetch the FULL current description of the change being split.
+        // It seeds the editor the same way jj would seed its text editor,
+        // and `--message` replaces the selected-changes description
+        // entirely, so a first-line-only prefill would lose the body.
+        let description =
+            match JjCommand::jj_description(&change_id, self.global_args.clone()).run() {
+                Ok(text) => text.trim().to_string(),
+                Err(err) => {
+                    self.info_list = Some(err.to_string().into_text()?);
+                    return Ok(());
+                }
+            };
+
+        self.start_multiline_text_input(
+            "Split (Ctrl+S to submit)",
+            &description,
+            TextInputAction::Split {
+                change_id,
+                destination_type: destination_type.map(str::to_string),
+                destination,
+                parallel,
+            },
         );
-        self.queue_jj_command(cmd)
+        Ok(())
     }
 
     pub fn jj_split_custom(&mut self) -> Result<()> {

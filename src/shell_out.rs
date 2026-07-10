@@ -481,21 +481,19 @@ impl JjCommand {
 
     pub fn jj_split(
         change_id: &str,
+        message: &str,
         destination_type: Option<&str>,
         destination: Option<&str>,
         parallel: bool,
         global_args: GlobalArgs,
         term: Term,
     ) -> Self {
-        let mut args = vec!["split", "--revision", change_id];
-        if parallel {
-            args.push("--parallel");
-        }
-        if let (Some(destination_type), Some(destination)) = (destination_type, destination) {
-            args.push(destination_type);
-            args.push(destination);
-        }
-        Self::new(&args, global_args, Some(term), ReturnOutput::Stderr)
+        Self::new(
+            &split_args(change_id, message, parallel, destination_type, destination),
+            global_args,
+            Some(term),
+            ReturnOutput::Stderr,
+        )
     }
 
     pub fn jj_resolve(
@@ -1198,7 +1196,13 @@ mod tests {
     fn test_split_args_default() {
         assert_eq!(
             split_args("abc123", "feat: part one", false, None, None),
-            vec!["split", "--revision", "abc123", "--message", "feat: part one"]
+            vec![
+                "split",
+                "--revision",
+                "abc123",
+                "--message",
+                "feat: part one"
+            ]
         );
     }
 
@@ -1220,7 +1224,13 @@ mod tests {
     #[test]
     fn test_split_args_onto_destination() {
         assert_eq!(
-            split_args("abc123", "feat: part one", false, Some("--onto"), Some("def456")),
+            split_args(
+                "abc123",
+                "feat: part one",
+                false,
+                Some("--onto"),
+                Some("def456")
+            ),
             vec![
                 "split",
                 "--revision",
