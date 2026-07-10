@@ -946,6 +946,24 @@ fn commit_message_args<'a>(message: &'a str, maybe_file_path: Option<&'a str>) -
     args
 }
 
+fn split_args<'a>(
+    change_id: &'a str,
+    message: &'a str,
+    parallel: bool,
+    destination_type: Option<&'a str>,
+    destination: Option<&'a str>,
+) -> Vec<&'a str> {
+    let mut args = vec!["split", "--revision", change_id, "--message", message];
+    if parallel {
+        args.push("--parallel");
+    }
+    if let (Some(destination_type), Some(destination)) = (destination_type, destination) {
+        args.push(destination_type);
+        args.push(destination);
+    }
+    args
+}
+
 fn description_args(change_id: &str) -> [&str; 7] {
     [
         "log",
@@ -1173,6 +1191,62 @@ mod tests {
         assert_eq!(
             commit_message_args("feat: add thing", Some("src/main.rs")),
             vec!["commit", "--message", "feat: add thing", "src/main.rs"]
+        );
+    }
+
+    #[test]
+    fn test_split_args_default() {
+        assert_eq!(
+            split_args("abc123", "feat: part one", false, None, None),
+            vec!["split", "--revision", "abc123", "--message", "feat: part one"]
+        );
+    }
+
+    #[test]
+    fn test_split_args_parallel() {
+        assert_eq!(
+            split_args("abc123", "feat: part one", true, None, None),
+            vec![
+                "split",
+                "--revision",
+                "abc123",
+                "--message",
+                "feat: part one",
+                "--parallel",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_split_args_onto_destination() {
+        assert_eq!(
+            split_args("abc123", "feat: part one", false, Some("--onto"), Some("def456")),
+            vec![
+                "split",
+                "--revision",
+                "abc123",
+                "--message",
+                "feat: part one",
+                "--onto",
+                "def456",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_split_args_parallel_with_destination() {
+        assert_eq!(
+            split_args("abc123", "m", true, Some("--insert-after"), Some("def456")),
+            vec![
+                "split",
+                "--revision",
+                "abc123",
+                "--message",
+                "m",
+                "--parallel",
+                "--insert-after",
+                "def456",
+            ]
         );
     }
 }
