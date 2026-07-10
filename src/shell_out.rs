@@ -439,6 +439,19 @@ impl JjCommand {
         Self::new(&args, global_args, Some(term), ReturnOutput::Stderr)
     }
 
+    pub fn jj_commit_with_message(
+        message: &str,
+        maybe_file_path: Option<&str>,
+        global_args: GlobalArgs,
+    ) -> Self {
+        Self::new(
+            &commit_message_args(message, maybe_file_path),
+            global_args,
+            None,
+            ReturnOutput::Stderr,
+        )
+    }
+
     pub fn jj_rebase(
         source_type: &str,
         source: &str,
@@ -933,6 +946,14 @@ fn new_merge_args<'a>(first: &'a str, second: &'a str, message: &'a str) -> [&'a
     ["new", "--message", message, first, second]
 }
 
+fn commit_message_args<'a>(message: &'a str, maybe_file_path: Option<&'a str>) -> Vec<&'a str> {
+    let mut args = vec!["commit", "--message", message];
+    if let Some(file_path) = maybe_file_path {
+        args.push(file_path);
+    }
+    args
+}
+
 fn description_args(change_id: &str) -> [&str; 7] {
     [
         "log",
@@ -1144,6 +1165,22 @@ mod tests {
                 "main@origin",
                 "feat/variables",
             ]
+        );
+    }
+
+    #[test]
+    fn test_commit_message_args_without_path() {
+        assert_eq!(
+            commit_message_args("feat: add thing", None),
+            vec!["commit", "--message", "feat: add thing"]
+        );
+    }
+
+    #[test]
+    fn test_commit_message_args_with_path() {
+        assert_eq!(
+            commit_message_args("feat: add thing", Some("src/main.rs")),
+            vec!["commit", "--message", "feat: add thing", "src/main.rs"]
         );
     }
 }
