@@ -431,14 +431,6 @@ impl JjCommand {
         Self::new(&args, global_args, None, ReturnOutput::Stderr)
     }
 
-    pub fn jj_commit(maybe_file_path: Option<&str>, global_args: GlobalArgs, term: Term) -> Self {
-        let mut args = vec!["commit"];
-        if let Some(file_path) = maybe_file_path {
-            args.push(file_path);
-        }
-        Self::new(&args, global_args, Some(term), ReturnOutput::Stderr)
-    }
-
     pub fn jj_commit_with_message(
         message: &str,
         maybe_file_path: Option<&str>,

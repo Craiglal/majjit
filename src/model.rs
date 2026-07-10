@@ -101,6 +101,9 @@ pub enum TextInputAction {
     AiDescribe {
         change_id: String,
     },
+    Commit {
+        file_path: Option<String>,
+    },
     BookmarkCreate,
     BookmarkDelete,
     BookmarkForget {
@@ -1190,6 +1193,14 @@ impl Model {
                 );
                 self.queue_jj_command(cmd)
             }
+            TextInputAction::Commit { file_path } => {
+                let cmd = JjCommand::jj_commit_with_message(
+                    &value,
+                    file_path.as_deref(),
+                    self.global_args.clone(),
+                );
+                self.queue_jj_command(cmd)
+            }
             TextInputAction::BookmarkCreate => self.apply_bookmark_create_from_input(value),
             TextInputAction::BookmarkDelete => self.apply_bookmark_delete_from_input(value),
             TextInputAction::BookmarkForget { include_remotes } => {
@@ -1759,10 +1770,27 @@ impl Model {
         Ok(())
     }
 
-    pub fn jj_commit(&mut self, term: Term) -> Result<()> {
-        let maybe_file_path = self.get_selected_file_path();
-        let cmd = JjCommand::jj_commit(maybe_file_path, self.global_args.clone(), term);
-        self.queue_jj_command(cmd)
+    pub fn start_commit_editor(&mut self) -> Result<()> {
+        let file_path = self.get_selected_file_path().map(str::to_string);
+
+        // Fetch the FULL current description of the working-copy commit.
+        // Seeding the editor from only the first line would let a submit
+        // (`jj commit --message ...`) silently discard an existing
+        // multi-line body.
+        let description = match JjCommand::jj_description("@", self.global_args.clone()).run() {
+            Ok(text) => text.trim().to_string(),
+            Err(err) => {
+                self.info_list = Some(err.to_string().into_text()?);
+                return Ok(());
+            }
+        };
+
+        self.start_multiline_text_input(
+            "Commit (Ctrl+S to submit)",
+            &description,
+            TextInputAction::Commit { file_path },
+        );
+        Ok(())
     }
 
     pub fn start_describe_editor(&mut self) -> Result<()> {
