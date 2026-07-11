@@ -32,10 +32,6 @@ pub const DEFAULT_REVSET: &str =
 
 const LOG_LIST_SCROLL_PADDING: usize = 5;
 
-/// Build a human-readable label for a merge parent used in the default merge
-/// message. Prefers the first bookmark (with any `@<remote>` suffix stripped so
-/// `main@origin` reads as `main`), then the description first line, then the
-/// change id.
 fn finish_tuicr_launch<Refresh>(
     launch_result: std::result::Result<(), TuicrError>,
     refresh: Refresh,
@@ -56,6 +52,10 @@ where
     }
 }
 
+/// Build a human-readable label for a merge parent used in the default merge
+/// message. Prefers the first bookmark (with any `@<remote>` suffix stripped so
+/// `main@origin` reads as `main`), then the description first line, then the
+/// change id.
 fn merge_parent_label(
     bookmarks: &[String],
     description_first_line: Option<&str>,
