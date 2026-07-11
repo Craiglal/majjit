@@ -2,7 +2,9 @@ use crate::ai_describe;
 use crate::{
     command_tree::{CommandTree, display_unbound_error_lines},
     log_tree::{DIFF_LINE_IDX, JjLog, LogTreeNode, TreePosition, get_parent_tree_position},
-    shell_out::{JjCommand, JjCommandError, TuicrTarget, open_file_in_editor, run_tuicr},
+    shell_out::{
+        JjCommand, JjCommandError, TuicrError, TuicrTarget, open_file_in_editor, run_tuicr,
+    },
     terminal::Term,
     update::{
         AbandonMode, AbsorbMode, BookmarkMoveMode, BookmarkSetMode, DuplicateDestination,
@@ -34,6 +36,26 @@ const LOG_LIST_SCROLL_PADDING: usize = 5;
 /// message. Prefers the first bookmark (with any `@<remote>` suffix stripped so
 /// `main@origin` reads as `main`), then the description first line, then the
 /// change id.
+fn finish_tuicr_launch<Refresh>(
+    launch_result: std::result::Result<(), TuicrError>,
+    refresh: Refresh,
+) -> Result<Option<anyhow::Error>>
+where
+    Refresh: FnOnce() -> Result<()>,
+{
+    match launch_result {
+        Err(TuicrError::Terminal(error)) => Err(error),
+        Ok(()) => {
+            refresh()?;
+            Ok(None)
+        }
+        Err(TuicrError::Launch(error)) => {
+            let _ = refresh();
+            Ok(Some(error))
+        }
+    }
+}
+
 fn merge_parent_label(
     bookmarks: &[String],
     description_first_line: Option<&str>,
@@ -1473,10 +1495,11 @@ impl Model {
                 }
             }
         };
-        let launch_result = run_tuicr(&term, &self.global_args.repository, target);
-
-        self.refresh()?;
-        if let Err(error) = launch_result {
+        let launch_error = finish_tuicr_launch(
+            run_tuicr(&term, &self.global_args.repository, target),
+            || self.refresh(),
+        )?;
+        if let Some(error) = launch_error {
             self.display_error_lines(&error);
         }
         Ok(())
@@ -3042,5 +3065,23 @@ mod tests {
     #[test]
     fn test_merge_parent_label_falls_back_to_change_id() {
         assert_eq!(merge_parent_label(&[], None, "abcd1234"), "abcd1234");
+    }
+
+    #[test]
+    fn recoverable_tuicr_launch_error_survives_refresh_failure() {
+        let refreshes = std::cell::RefCell::new(0);
+
+        let error = finish_tuicr_launch(
+            Err(TuicrError::Launch(anyhow::anyhow!("launch failed"))),
+            || {
+                *refreshes.borrow_mut() += 1;
+                Err(anyhow::anyhow!("refresh failed"))
+            },
+        )
+        .unwrap()
+        .expect("launch failure should be displayed");
+
+        assert_eq!(error.to_string(), "launch failed");
+        assert_eq!(*refreshes.borrow(), 1);
     }
 }

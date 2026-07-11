@@ -32,6 +32,28 @@ pub enum TuicrTarget {
     Range { base: String, tip: String },
 }
 
+#[derive(Debug)]
+pub enum TuicrError {
+    Launch(anyhow::Error),
+    Terminal(anyhow::Error),
+}
+
+impl std::fmt::Display for TuicrError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Launch(error) | Self::Terminal(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for TuicrError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Launch(error) | Self::Terminal(error) => error.source(),
+        }
+    }
+}
+
 #[allow(
     dead_code,
     reason = "The Stage 1 adapter is wired by a later model integration."
@@ -58,7 +80,11 @@ fn tuicr_command(repository: &str, target: &TuicrTarget) -> Command {
     dead_code,
     reason = "The Stage 1 adapter is wired by a later model integration."
 )]
-pub fn run_tuicr(term: &Term, repository: &str, target: TuicrTarget) -> Result<()> {
+pub fn run_tuicr(
+    term: &Term,
+    repository: &str,
+    target: TuicrTarget,
+) -> std::result::Result<(), TuicrError> {
     run_tuicr_with(
         repository,
         &target,
@@ -78,23 +104,25 @@ fn run_tuicr_with<Relinquish, Takeover, Run>(
     relinquish: Relinquish,
     takeover: Takeover,
     run: Run,
-) -> Result<()>
+) -> std::result::Result<(), TuicrError>
 where
     Relinquish: FnOnce() -> Result<()>,
     Takeover: FnOnce() -> Result<()>,
     Run: FnOnce(&mut Command) -> std::io::Result<bool>,
 {
-    relinquish()?;
+    relinquish().map_err(TuicrError::Terminal)?;
     let mut command = tuicr_command(repository, target);
     let process_result = run(&mut command);
-    takeover()?;
+    takeover().map_err(TuicrError::Terminal)?;
     match process_result {
         Ok(true) => Ok(()),
-        Ok(false) => Err(anyhow!("tuicr exited unsuccessfully")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(anyhow!(
-            "Unable to start tuicr: it was not found on PATH. Please install it from https://tuicr.dev."
-        )),
-        Err(error) => Err(error.into()),
+        Ok(false) => Err(TuicrError::Launch(anyhow!("tuicr exited unsuccessfully"))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(TuicrError::Launch(anyhow!(
+                "Unable to start tuicr: it was not found on PATH. Please install it from https://tuicr.dev."
+            )))
+        }
+        Err(error) => Err(TuicrError::Launch(error.into())),
     }
 }
 
@@ -1284,6 +1312,32 @@ mod tests {
     }
 
     #[test]
+    fn tuicr_takeover_failure_is_terminal() {
+        let events = std::cell::RefCell::new(Vec::new());
+
+        let error = run_tuicr_with(
+            "/repo",
+            &TuicrTarget::WorkingCopy,
+            || {
+                events.borrow_mut().push("relinquish");
+                Ok(())
+            },
+            || {
+                events.borrow_mut().push("takeover");
+                Err(anyhow!("takeover failed"))
+            },
+            |_| {
+                events.borrow_mut().push("run");
+                Ok(false)
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, TuicrError::Terminal(_)));
+        assert_eq!(events.into_inner(), ["relinquish", "run", "takeover"]);
+    }
+
+    #[test]
     fn tuicr_reclaims_terminal_and_explains_missing_executable() {
         let events = std::cell::RefCell::new(Vec::new());
 
@@ -1317,7 +1371,7 @@ mod tests {
 
     #[test]
     fn tuicr_exposes_a_narrow_terminal_backed_adapter() {
-        let _: fn(&Term, &str, TuicrTarget) -> Result<()> = run_tuicr;
+        let _: fn(&Term, &str, TuicrTarget) -> std::result::Result<(), TuicrError> = run_tuicr;
     }
 
     #[test]
