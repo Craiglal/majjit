@@ -3,7 +3,7 @@ use crate::update::{
     DuplicateDestinationType, GitFetchMode, GitPushMode, InterdiffMode, Message, MetaeditAction,
     NewMode, NextPrevDirection, NextPrevMode, ParallelizeSource, RebaseDestination,
     RebaseDestinationType, RebaseSourceType, RestoreMode, RevertDestination, RevertDestinationType,
-    RevertRevision, SetRevsetMode, SignAction, SimplifyParentsMode, SplitDestination,
+    RevertRevision, ReviewMode, SetRevsetMode, SignAction, SimplifyParentsMode, SplitDestination,
     SplitDestinationType, SquashMode, ViewMode,
 };
 use crossterm::event::KeyCode;
@@ -2009,14 +2009,42 @@ impl CommandTree {
             ),
             (
                 "Commands",
-                "Restore",
+                "Review",
                 vec![KeyCode::Char('R')],
+                CommandTreeNode::new_children(),
+            ),
+            (
+                "Review",
+                "Selection (or working copy)",
+                vec![KeyCode::Char('R'), KeyCode::Char('R')],
+                CommandTreeNode::new_action(Message::Review {
+                    mode: ReviewMode::SelectionOrWorkingCopy,
+                }),
+            ),
+            (
+                "Review",
+                "From selection to destination",
+                vec![KeyCode::Char('R'), KeyCode::Char('r')],
+                CommandTreeNode::new_action_with_children(Message::SaveSelection),
+            ),
+            (
+                "Review range",
+                "Select destination",
+                vec![KeyCode::Char('R'), KeyCode::Char('r'), KeyCode::Enter],
+                CommandTreeNode::new_action(Message::Review {
+                    mode: ReviewMode::SavedRange,
+                }),
+            ),
+            (
+                "Commands",
+                "Restore",
+                vec![KeyCode::Char('x')],
                 CommandTreeNode::new_children(),
             ),
             (
                 "Restore",
                 "Changes in selection",
-                vec![KeyCode::Char('R'), KeyCode::Char('r')],
+                vec![KeyCode::Char('x'), KeyCode::Char('r')],
                 CommandTreeNode::new_action(Message::Restore {
                     mode: RestoreMode::ChangesIn,
                 }),
@@ -2024,7 +2052,7 @@ impl CommandTree {
             (
                 "Restore",
                 "Changes in selection (restore descendants)",
-                vec![KeyCode::Char('R'), KeyCode::Char('d')],
+                vec![KeyCode::Char('x'), KeyCode::Char('d')],
                 CommandTreeNode::new_action(Message::Restore {
                     mode: RestoreMode::ChangesInRestoreDescendants,
                 }),
@@ -2032,7 +2060,7 @@ impl CommandTree {
             (
                 "Restore",
                 "From selection into @",
-                vec![KeyCode::Char('R'), KeyCode::Char('f')],
+                vec![KeyCode::Char('x'), KeyCode::Char('f')],
                 CommandTreeNode::new_action(Message::Restore {
                     mode: RestoreMode::From,
                 }),
@@ -2040,7 +2068,7 @@ impl CommandTree {
             (
                 "Restore",
                 "From @ into selection",
-                vec![KeyCode::Char('R'), KeyCode::Char('i')],
+                vec![KeyCode::Char('x'), KeyCode::Char('i')],
                 CommandTreeNode::new_action(Message::Restore {
                     mode: RestoreMode::Into,
                 }),
@@ -2048,13 +2076,13 @@ impl CommandTree {
             (
                 "Restore",
                 "From selection into destination",
-                vec![KeyCode::Char('R'), KeyCode::Char('R')],
+                vec![KeyCode::Char('x'), KeyCode::Char('R')],
                 CommandTreeNode::new_action_with_children(Message::SaveSelection),
             ),
             (
                 "Restore into",
                 "Select destination",
-                vec![KeyCode::Char('R'), KeyCode::Char('R'), KeyCode::Enter],
+                vec![KeyCode::Char('x'), KeyCode::Char('R'), KeyCode::Enter],
                 CommandTreeNode::new_action(Message::Restore {
                     mode: RestoreMode::FromInto,
                 }),
@@ -2356,5 +2384,66 @@ pub fn display_unbound_error_lines(
             info_list.lines.push(Line::from(vec![]));
         }
         info_list.lines.push(error_line);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn review_selection_binding_targets_selected_or_working_copy() {
+        let tree = CommandTree::new();
+        let node = tree
+            .get_node(&[KeyCode::Char('R'), KeyCode::Char('R')])
+            .expect("R R should be bound");
+
+        assert_eq!(
+            node.action,
+            Some(Message::Review {
+                mode: ReviewMode::SelectionOrWorkingCopy,
+            })
+        );
+    }
+
+    #[test]
+    fn review_range_binding_saves_selection_and_has_children() {
+        let tree = CommandTree::new();
+        let node = tree
+            .get_node(&[KeyCode::Char('R'), KeyCode::Char('r')])
+            .expect("R r should be bound");
+
+        assert_eq!(node.action, Some(Message::SaveSelection));
+        assert!(node.children.is_some(), "R r should accept a destination");
+    }
+
+    #[test]
+    fn review_range_enter_binding_targets_saved_base_and_current_tip() {
+        let tree = CommandTree::new();
+        let node = tree
+            .get_node(&[KeyCode::Char('R'), KeyCode::Char('r'), KeyCode::Enter])
+            .expect("R r Enter should be bound");
+
+        assert_eq!(
+            node.action,
+            Some(Message::Review {
+                mode: ReviewMode::SavedRange,
+            })
+        );
+    }
+
+    #[test]
+    fn restore_remains_available_under_x_after_review_claims_r() {
+        let tree = CommandTree::new();
+        let node = tree
+            .get_node(&[KeyCode::Char('x'), KeyCode::Char('r')])
+            .expect("x r should restore changes in the selection");
+
+        assert_eq!(
+            node.action,
+            Some(Message::Restore {
+                mode: RestoreMode::ChangesIn,
+            })
+        );
     }
 }

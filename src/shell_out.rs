@@ -21,6 +21,83 @@ pub struct JjCommand {
     color: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "The Stage 1 adapter is wired by a later model integration."
+)]
+pub enum TuicrTarget {
+    WorkingCopy,
+    Change(String),
+    Range { base: String, tip: String },
+}
+
+#[allow(
+    dead_code,
+    reason = "The Stage 1 adapter is wired by a later model integration."
+)]
+fn tuicr_args(target: &TuicrTarget) -> Vec<String> {
+    match target {
+        TuicrTarget::WorkingCopy => vec!["-w".to_string()],
+        TuicrTarget::Change(change) => vec!["-r".to_string(), format!("{change}-..{change}")],
+        TuicrTarget::Range { base, tip } => vec!["-r".to_string(), format!("{base}..{tip}")],
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "The Stage 1 adapter is wired by a later model integration."
+)]
+fn tuicr_command(repository: &str, target: &TuicrTarget) -> Command {
+    let mut command = Command::new("tuicr");
+    command.args(tuicr_args(target)).current_dir(repository);
+    command
+}
+
+#[allow(
+    dead_code,
+    reason = "The Stage 1 adapter is wired by a later model integration."
+)]
+pub fn run_tuicr(term: &Term, repository: &str, target: TuicrTarget) -> Result<()> {
+    run_tuicr_with(
+        repository,
+        &target,
+        terminal::relinquish_terminal,
+        || terminal::takeover_terminal(term),
+        |command| command.status().map(|status| status.success()),
+    )
+}
+
+#[allow(
+    dead_code,
+    reason = "The Stage 1 adapter is wired by a later model integration."
+)]
+fn run_tuicr_with<Relinquish, Takeover, Run>(
+    repository: &str,
+    target: &TuicrTarget,
+    relinquish: Relinquish,
+    takeover: Takeover,
+    run: Run,
+) -> Result<()>
+where
+    Relinquish: FnOnce() -> Result<()>,
+    Takeover: FnOnce() -> Result<()>,
+    Run: FnOnce(&mut Command) -> std::io::Result<bool>,
+{
+    relinquish()?;
+    let mut command = tuicr_command(repository, target);
+    let process_result = run(&mut command);
+    takeover()?;
+    match process_result {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(anyhow!("tuicr exited unsuccessfully")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(anyhow!(
+            "Unable to start tuicr: it was not found on PATH. Please install it from https://tuicr.dev."
+        )),
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[derive(Debug)]
 enum ReturnOutput {
     Combined,
@@ -1127,6 +1204,121 @@ fn strip_non_style_ansi(str: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tuicr_target_arguments_are_exact() {
+        assert_eq!(tuicr_args(&TuicrTarget::WorkingCopy), vec!["-w"]);
+        assert_eq!(
+            tuicr_args(&TuicrTarget::Change("CHANGE".to_string())),
+            vec!["-r", "CHANGE-..CHANGE"]
+        );
+        assert_eq!(
+            tuicr_args(&TuicrTarget::Range {
+                base: "BASE".to_string(),
+                tip: "TIP".to_string(),
+            }),
+            vec!["-r", "BASE..TIP"]
+        );
+    }
+
+    #[test]
+    fn tuicr_uses_repository_as_current_dir() {
+        let command = tuicr_command("/repo", &TuicrTarget::WorkingCopy);
+
+        assert_eq!(command.get_program(), "tuicr");
+        assert_eq!(
+            command.get_current_dir(),
+            Some(std::path::Path::new("/repo"))
+        );
+    }
+
+    #[test]
+    fn tuicr_accepts_successful_process_and_recovers_terminal() {
+        let events = std::cell::RefCell::new(Vec::new());
+
+        let result = run_tuicr_with(
+            "/repo",
+            &TuicrTarget::WorkingCopy,
+            || {
+                events.borrow_mut().push("relinquish");
+                Ok(())
+            },
+            || {
+                events.borrow_mut().push("takeover");
+                Ok(())
+            },
+            |_| {
+                events.borrow_mut().push("run");
+                Ok(true)
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(events.into_inner(), ["relinquish", "run", "takeover"]);
+    }
+
+    #[test]
+    fn tuicr_reclaims_terminal_after_nonzero_exit() {
+        let events = std::cell::RefCell::new(Vec::new());
+
+        let error = run_tuicr_with(
+            "/repo",
+            &TuicrTarget::WorkingCopy,
+            || {
+                events.borrow_mut().push("relinquish");
+                Ok(())
+            },
+            || {
+                events.borrow_mut().push("takeover");
+                Ok(())
+            },
+            |_| {
+                events.borrow_mut().push("run");
+                Ok(false)
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("tuicr exited unsuccessfully"));
+        assert_eq!(events.into_inner(), ["relinquish", "run", "takeover"]);
+    }
+
+    #[test]
+    fn tuicr_reclaims_terminal_and_explains_missing_executable() {
+        let events = std::cell::RefCell::new(Vec::new());
+
+        let error = run_tuicr_with(
+            "/repo",
+            &TuicrTarget::WorkingCopy,
+            || {
+                events.borrow_mut().push("relinquish");
+                Ok(())
+            },
+            || {
+                events.borrow_mut().push("takeover");
+                Ok(())
+            },
+            |_| {
+                events.borrow_mut().push("run");
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "test missing executable",
+                ))
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(events.into_inner(), ["relinquish", "run", "takeover"]);
+        let message = error.to_string();
+        assert!(message.contains("tuicr"));
+        assert!(message.contains("PATH"));
+        assert!(message.contains("https://tuicr.dev"));
+    }
+
+    #[test]
+    fn tuicr_exposes_a_narrow_terminal_backed_adapter() {
+        let _: fn(&Term, &str, TuicrTarget) -> Result<()> = run_tuicr;
+    }
 
     #[test]
     fn test_diff_git_args() {

@@ -2,15 +2,15 @@ use crate::ai_describe;
 use crate::{
     command_tree::{CommandTree, display_unbound_error_lines},
     log_tree::{DIFF_LINE_IDX, JjLog, LogTreeNode, TreePosition, get_parent_tree_position},
-    shell_out::{JjCommand, JjCommandError, open_file_in_editor},
+    shell_out::{JjCommand, JjCommandError, TuicrTarget, open_file_in_editor, run_tuicr},
     terminal::Term,
     update::{
         AbandonMode, AbsorbMode, BookmarkMoveMode, BookmarkSetMode, DuplicateDestination,
         DuplicateDestinationType, GitFetchMode, GitPushMode, InterdiffMode, Message,
         MetaeditAction, NewMode, NextPrevDirection, NextPrevMode, ParallelizeSource,
         RebaseDestination, RebaseDestinationType, RebaseSourceType, RestoreMode, RevertDestination,
-        RevertDestinationType, RevertRevision, SetRevsetMode, SignAction, SimplifyParentsMode,
-        SplitDestination, SplitDestinationType, SquashMode, ViewMode,
+        RevertDestinationType, RevertRevision, ReviewMode, SetRevsetMode, SignAction,
+        SimplifyParentsMode, SplitDestination, SplitDestinationType, SquashMode, ViewMode,
     },
 };
 use ansi_to_tui::IntoText;
@@ -1451,6 +1451,34 @@ impl Model {
         self.saved_file_path = self.get_selected_file_path().map(String::from);
         self.saved_tree_position = Some(self.get_selected_tree_position());
 
+        Ok(())
+    }
+
+    pub fn review(&mut self, mode: ReviewMode, term: Term) -> Result<()> {
+        let target = match mode {
+            ReviewMode::SelectionOrWorkingCopy => self
+                .get_selected_change_id()
+                .map(|change| TuicrTarget::Change(change.to_string()))
+                .unwrap_or(TuicrTarget::WorkingCopy),
+            ReviewMode::SavedRange => {
+                let Some(base) = self.get_saved_change_id() else {
+                    return self.invalid_selection();
+                };
+                let Some(tip) = self.get_selected_change_id() else {
+                    return self.invalid_selection();
+                };
+                TuicrTarget::Range {
+                    base: base.to_string(),
+                    tip: tip.to_string(),
+                }
+            }
+        };
+        let launch_result = run_tuicr(&term, &self.global_args.repository, target);
+
+        self.refresh()?;
+        if let Err(error) = launch_result {
+            self.display_error_lines(&error);
+        }
         Ok(())
     }
 

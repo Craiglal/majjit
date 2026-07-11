@@ -100,6 +100,9 @@ pub enum Message {
     },
     Redo,
     Refresh,
+    Review {
+        mode: ReviewMode,
+    },
     Resolve,
     Restore {
         mode: RestoreMode,
@@ -291,6 +294,12 @@ pub enum RebaseSourceType {
     Branch,
     Revisions,
     Source,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ReviewMode {
+    SelectionOrWorkingCopy,
+    SavedRange,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -580,6 +589,7 @@ fn handle_msg(term: Term, model: &mut Model, msg: Message) -> Result<Option<Mess
             destination_type,
         } => model.jj_rebase_target_fuzzy(source_type, destination_type)?,
         Message::Redo => model.jj_redo()?,
+        Message::Review { mode } => model.review(mode, term)?,
         Message::Resolve => model.jj_resolve(term)?,
         Message::Restore { mode } => model.jj_restore(mode)?,
         Message::Revert {

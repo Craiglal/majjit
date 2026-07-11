@@ -46,6 +46,12 @@ diffs and conflict resolution:
   `jj resolve` action opens meld as a visual 3-way merge editor, auto-merging the
   clean hunks and presenting only the real conflicts for editing. Conflicts shown in
   diffs use jj's `snapshot` conflict-marker style.
+- **[tuicr](https://tuicr.dev)** (optional, standalone prerequisite for review) —
+  install tuicr separately and make it available on `PATH` to use Majjit's Review
+  menu. `R R` reviews the selected change with `tuicr -r <change>-..<change>`, or
+  reviews the working copy with `tuicr -w` when no change is selected. `R r` saves
+  the selected change as the range base; after navigating to a tip, `R r Enter`
+  reviews the range with `tuicr -r <base>..<tip>`.
 
 ## AI commit messages
 
